@@ -57,6 +57,15 @@ describe('createQuitGuard', () => {
     expect(quit).toHaveBeenCalledTimes(1)
   })
 
+  it('never forces the exit (exit code stays 0) when shutdown finishes before the timeout', async () => {
+    const { guard, quit, forceExit } = setup(() => new Promise<void>((resolve) => setTimeout(resolve, 4_000)))
+    guard({ preventDefault: vi.fn() })
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(quit).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(forceExit).not.toHaveBeenCalled()
+  })
+
   it('forces the exit after the hard timeout and does not quit afterwards', async () => {
     let finish: () => void = () => {}
     const { guard, quit, forceExit } = setup(() => new Promise<void>((resolve) => (finish = resolve)))

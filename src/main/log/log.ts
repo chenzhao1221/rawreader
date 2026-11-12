@@ -1,3 +1,5 @@
+import { redactText, redactValue } from './redact'
+
 export interface Logger {
   debug(message: string, ...meta: unknown[]): void
   info(message: string, ...meta: unknown[]): void
@@ -5,15 +7,36 @@ export interface Logger {
   error(message: string, ...meta: unknown[]): void
 }
 
-/**
- * Minimal console logger for the skeleton. A later slice replaces the body with
- * electron-log plus a redaction filter. Callers must never pass cookies, auth
- * headers or URLs with query strings.
- */
-export function createLogger(scope: string): Logger {
-  const write = (level: 'debug' | 'info' | 'warn' | 'error', message: string, meta: unknown[]): void => {
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+/** Where finished (already redacted) log lines go. */
+export interface LogSink {
+  write(level: LogLevel, scope: string, message: string, meta: unknown[]): void
+}
+
+/** Default sink until `initLogging()` installs the file sink: plain console output. */
+const consoleSink: LogSink = {
+  write(level, scope, message, meta) {
     const line = `${new Date().toISOString()} ${level.toUpperCase()} [${scope}] ${message}`
     console[level === 'debug' ? 'log' : level](line, ...meta)
+  },
+}
+
+let sink: LogSink = consoleSink
+
+/** Replaces the active sink. `setup.ts` installs the electron-log sink; tests install a collector. */
+export function setLogSink(next: LogSink | null): void {
+  sink = next ?? consoleSink
+}
+
+/**
+ * Creates a scoped logger. Every message and meta value is redacted before it
+ * reaches the sink: URLs lose query strings, cookie and authorization values
+ * are replaced, data URLs are summarised.
+ */
+export function createLogger(scope: string): Logger {
+  const write = (level: LogLevel, message: string, meta: unknown[]): void => {
+    sink.write(level, scope, redactText(message), meta.map((item) => redactValue(item)))
   }
   return {
     debug: (message, ...meta) => write('debug', message, meta),
