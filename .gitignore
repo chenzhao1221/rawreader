@@ -1,13 +1,13 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 
 # Downloaded models (fetched at first run, not committed). Anchored so src/main/models/ stays tracked.
 /models/
 *.gguf
 
-# Bundled resources (populated by scripts, not committed) and local dev overrides
+# Bundled llama.cpp build (populated by scripts, not committed) and local dev overrides
 resources/llama/
-resources/detector/
+# resources/detector/ is committed: the 11 MB int8 detector is small enough to bundle (Apache-2.0).
 dev.config.local.json
 
 # Build and packager output
@@ -25,6 +25,7 @@ build/*.yml
 *.appxbundle
 
 # Logs and caches
+.e2e-out/
 *.log
 logs/
 .cache/
