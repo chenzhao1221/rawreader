@@ -1,9 +1,14 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 
-# Downloaded models (fetched at first run, not committed)
-models/
+# Downloaded models (fetched at first run, not committed). Anchored so src/main/models/ stays tracked.
+/models/
 *.gguf
+
+# Bundled resources (populated by scripts, not committed) and local dev overrides
+resources/llama/
+resources/detector/
+dev.config.local.json
 
 # Build and packager output
 dist/
@@ -39,4 +44,5 @@ Desktop.ini
 .idea/
 .vscode/
 
-# NOTE: Do not ignore .kiro/ — Kiroween requires /.kiro in the repo and not gitignored.
+# NOTE: Do not ignore .kiro/ - Kiroween requires /.kiro in the repo and not gitignored.
+
