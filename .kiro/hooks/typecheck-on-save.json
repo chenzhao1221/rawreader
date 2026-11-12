@@ -1,0 +1,14 @@
+﻿{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Typecheck on save",
+      "description": "Runs npm run typecheck after the agent saves a .ts or .svelte file under src/. Command only; no prompt is injected.",
+      "trigger": "PostFileSave",
+      "matcher": "src[\\\\/].*\\.(ts|svelte)$",
+      "action": { "type": "command", "command": "npm run typecheck" },
+      "timeout": 180,
+      "enabled": true
+    }
+  ]
+}

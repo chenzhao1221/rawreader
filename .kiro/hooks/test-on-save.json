@@ -1,0 +1,14 @@
+﻿{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Run tests on test-file save",
+      "description": "Runs npm test after the agent saves a *.test.ts file. Command only; no prompt is injected.",
+      "trigger": "PostFileSave",
+      "matcher": "\\.test\\.ts$",
+      "action": { "type": "command", "command": "npm test" },
+      "timeout": 180,
+      "enabled": true
+    }
+  ]
+}
