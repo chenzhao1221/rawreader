@@ -1,0 +1,15 @@
+{
+  "llama": {
+    "backend": "vulkan",
+    "binDirs": { "vulkan": "../ocr-vl-test/llamacpp/bin" }
+  },
+  "models": {
+    "autoDownload": false,
+    "paths": {
+      "detector": "../ocr-vl-test/models/detector-v4-s_int8.onnx",
+      "ocr": "../ocr-vl-test/llamacpp/models/PaddleOCR-VL-1.5.gguf",
+      "ocrMmproj": "../ocr-vl-test/llamacpp/models/PaddleOCR-VL-1.5-mmproj.gguf",
+      "translator": "../wb-tests/models/Index-Translate-2B.Q4_K_M.gguf"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+/**
+ * Channel names as plain strings, with no zod import. Preload scripts import
+ * only this file at runtime, so they stay tiny and standalone (sandbox).
+ * `contract.ts` declares the payload schema for each name and is checked
+ * against these lists at compile time.
+ */
+
+/** Renderer to main request/response channels (ipcRenderer.invoke). */
+export const INVOKE_CHANNELS = [
+  'browse:navigate',
+  'browse:go',
+  'shell:panel-visibility',
+  'config:get',
+  'config:update',
+  'llama:status',
+  'llama:control',
+] as const
+
+/** Main to renderer push events (webContents.send). */
+export const EVENT_CHANNELS = [
+  'browse:state',
+  'config:changed',
+  'llama:status',
+  'shell:notice',
+] as const
+
+export type InvokeChannel = (typeof INVOKE_CHANNELS)[number]
+export type EventChannel = (typeof EVENT_CHANNELS)[number]
+
+export function isInvokeChannel(value: unknown): value is InvokeChannel {
+  return typeof value === 'string' && (INVOKE_CHANNELS as readonly string[]).includes(value)
+}
+
+export function isEventChannel(value: unknown): value is EventChannel {
+  return typeof value === 'string' && (EVENT_CHANNELS as readonly string[]).includes(value)
+}
