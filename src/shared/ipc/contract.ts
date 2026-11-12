@@ -58,6 +58,50 @@ export const ShellNoticeSchema = z.object({
 })
 export type ShellNotice = z.infer<typeof ShellNoticeSchema>
 
+// ---------------------------------------------------------------------------
+// Browse page <-> main (untrusted, page-adjacent input; always validated)
+// ---------------------------------------------------------------------------
+
+/** Settings the browse preload needs. Pushed on change and returned by page:hello. */
+export const PageConfigSchema = z.object({
+  enabled: z.boolean(),
+  minImageSize: z.number().int().min(0),
+  rootMarginPx: z.number().int().min(0),
+})
+export type PageConfig = z.infer<typeof PageConfigSchema>
+
+/** The preload announces each new document with a fresh random id (R5.5). */
+export const PageHelloSchema = z.object({
+  docId: z.string().min(8).max(64),
+  url: z.string().max(8192),
+})
+
+export const PageImageSchema = z.object({
+  /** Stable per-element id assigned by the preload (data-rr-id). */
+  elId: z.string().min(1).max(64),
+  url: z.string().min(1).max(8192),
+  naturalW: z.number().int().min(0).max(100_000),
+  naturalH: z.number().int().min(0).max(1_000_000),
+  /** CSS pixels between the image and the viewport; 0 when visible. Smaller runs first. */
+  distance: z.number().min(0).max(10_000_000),
+})
+export type PageImage = z.infer<typeof PageImageSchema>
+
+export const PageImagesBatchSchema = z.object({
+  docId: z.string().min(8).max(64),
+  pageUrl: z.string().max(8192),
+  images: z.array(PageImageSchema).min(1).max(200),
+})
+export type PageImagesBatch = z.infer<typeof PageImagesBatchSchema>
+
+/** Per-page progress shown in the shell (R5.7). */
+export const PipelineProgressSchema = z.object({
+  total: z.number().int().min(0),
+  done: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  active: z.number().int().min(0),
+})
+export type PipelineProgress = z.infer<typeof PipelineProgressSchema>
 /** Errors crossing IPC are plain objects, never thrown class instances. */
 export const IpcErrorSchema = z.object({ code: z.string(), message: z.string() })
 export type IpcError = z.infer<typeof IpcErrorSchema>
@@ -99,6 +143,9 @@ export const ipc = {
     }),
     ServerStatusSchema,
   ),
+  'app:open-logs': def(z.void(), z.void()),
+  'page:hello': def(PageHelloSchema, PageConfigSchema, ['browse']),
+  'page:images': def(PageImagesBatchSchema, z.void(), ['browse']),
 } as const satisfies Record<InvokeChannel, ChannelDef>
 
 export const events = {
@@ -106,6 +153,8 @@ export const events = {
   'config:changed': ConfigSchema,
   'llama:status': ServerStatusSchema,
   'shell:notice': ShellNoticeSchema,
+  'page:config': PageConfigSchema,
+  'pipeline:progress': PipelineProgressSchema,
 } as const satisfies Record<EventChannel, z.ZodType>
 
 // ---------------------------------------------------------------------------

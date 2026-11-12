@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
 import type { EventChannel } from '../shared/ipc/channels'
 import type { EventPayload } from '../shared/ipc/contract'
@@ -9,6 +9,9 @@ import { registerSkeletonHandlers } from './ipc/handlers'
 import { createIpcRegistrar } from './ipc/register'
 import { LlamaManager, llamaPaths } from './llama/manager'
 import { createLogger } from './log/log'
+import { initLogging, logsDirFor } from './log/setup'
+import { createPipelineWiring } from './pipeline/wiring'
+import type { PipelineWiring } from './pipeline/wiring'
 import { SHUTDOWN_TIMEOUT_MS, createQuitGuard } from './shutdown'
 import { isHttpUrl } from './window/address'
 import { createBrowseView } from './window/browse-view'
@@ -25,10 +28,12 @@ app.setPath(
   join(app.getPath('appData'), appIdentity.userDataDirName + (app.isPackaged ? '' : '-dev')),
 )
 app.setName(appIdentity.productName)
+initLogging(logsDirFor(app.getPath('userData')))
 
 let shell: ShellWindow | null = null
 let browse: BrowseView | null = null
 let manager: LlamaManager | null = null
+let wiring: PipelineWiring | null = null
 let disposeIpc: (() => void) | null = null
 
 function sendToShell<E extends EventChannel>(channel: E, payload: EventPayload<E>): void {
@@ -45,11 +50,12 @@ async function bootstrap(): Promise<void> {
   const resourcesDir = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
   const { runDir, logsDir } = llamaPaths(userDataDir)
 
-  setupBrowseSession((notice) => sendToShell('shell:notice', notice))
+  const browseSession = setupBrowseSession((notice) => sendToShell('shell:notice', notice))
 
   const shellWindow = createShellWindow()
   shell = shellWindow
   const { win } = shellWindow
+  win.on('closed', () => log.info('Shell window closed'))
 
   const browseView = createBrowseView({
     win,
@@ -64,6 +70,7 @@ async function bootstrap(): Promise<void> {
     },
   })
   browse = browseView
+  browseView.onDestroyed(() => log.info('Browse view webContents destroyed'))
 
   const llama = new LlamaManager({
     getConfig,
@@ -74,6 +81,23 @@ async function bootstrap(): Promise<void> {
     logger: createLogger('llama'),
   })
   manager = llama
+
+  const modelEnv = { userDataDir, resourcesDir, exists: existsSync }
+  const pipelineWiring = createPipelineWiring({
+    getConfig,
+    getServerStatus: (role) => llama.getStatus(role),
+    browseWebContents: browseView.webContents,
+    browseSession,
+    env: modelEnv,
+    workerPath: join(import.meta.dirname, 'detect-worker.js'),
+    sendProgress: (progress) => sendToShell('pipeline:progress', progress),
+    sendPageConfig: (config) => {
+      const target = browseView.webContents
+      if (!target.isDestroyed()) target.send('page:config', config)
+    },
+    logger: createLogger('pipeline'),
+  })
+  wiring = pipelineWiring
 
   const registrar = createIpcRegistrar(ipcMain, {
     shell: () => (shellWindow.win.isDestroyed() ? null : shellWindow.webContentsId),
@@ -88,11 +112,18 @@ async function bootstrap(): Promise<void> {
     setBrowseVisible: (visible) => browseView.setVisible(visible),
     getLlamaStatuses: () => llama.getStatuses(),
     controlLlama: (role, action) => llama.control(role, action),
+    pageHello: (hello) => pipelineWiring.pageHello(hello),
+    pageImages: (batch) => pipelineWiring.pageImages(batch),
+    openLogFolder: async () => {
+      const error = await electronShell.openPath(logsDir)
+      if (error) log.warn(`Cannot open the log folder: ${error}`)
+    },
   })
 
   configService.onChanged((next, previous) => {
     sendToShell('config:changed', next)
     llama.handleConfigChange(next, previous)
+    pipelineWiring.onConfigChanged(next)
   })
 
   await shellWindow.loaded.catch((error: unknown) => {
@@ -125,6 +156,10 @@ if (!app.requestSingleInstanceLock()) {
     win.focus()
   })
 
+  // Exit code: a normal window close runs shutdown() and then app.quit(), which exits 0
+  // (verified by closing the window of a built app: exit code 0, both llama-server PIDs gone).
+  // An exit code of 1 seen in an earlier smoke run could not be reproduced and is attributed to
+  // the test harness (process ended from outside). app.exit() is only used by the hard timeout.
   app.on('before-quit', createQuitGuard({
     timeoutMs: SHUTDOWN_TIMEOUT_MS,
     logger: log,
@@ -132,12 +167,16 @@ if (!app.requestSingleInstanceLock()) {
     forceExit: () => app.exit(0),
     shutdown: async () => {
       disposeIpc?.()
+      await wiring?.dispose()
       await manager?.stopAll()
       browse?.destroy()
     },
   }))
 
-  app.on('window-all-closed', () => app.quit())
+  app.on('window-all-closed', () => {
+    log.info('All windows closed; quitting')
+    app.quit()
+  })
 
   app
     .whenReady()

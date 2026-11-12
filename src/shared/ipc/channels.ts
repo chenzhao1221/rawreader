@@ -14,6 +14,9 @@ export const INVOKE_CHANNELS = [
   'config:update',
   'llama:status',
   'llama:control',
+  'app:open-logs',
+  'page:hello',
+  'page:images',
 ] as const
 
 /** Main to renderer push events (webContents.send). */
@@ -22,6 +25,8 @@ export const EVENT_CHANNELS = [
   'config:changed',
   'llama:status',
   'shell:notice',
+  'page:config',
+  'pipeline:progress',
 ] as const
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number]

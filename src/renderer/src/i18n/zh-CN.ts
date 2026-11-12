@@ -17,7 +17,9 @@ export const zhCN = {
     loading: '加载中…',
   },
   status: {
-    pipelinePlaceholder: '自动翻译流程尚未接入（占位提示）',
+    openLogs: '打开日志文件夹',
+    progress: '本页进度',
+    failed: '失败',
     ocrRole: '文字识别',
     translateRole: '翻译',
   },

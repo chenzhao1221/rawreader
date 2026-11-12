@@ -9,7 +9,11 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       rollupOptions: {
-        input: { index: resolve(root, 'src/main/index.ts') },
+        input: {
+          index: resolve(root, 'src/main/index.ts'),
+          // Utility-process entry for detection (sharp + onnxruntime-node live there).
+          'detect-worker': resolve(root, 'src/main/detect/worker.ts'),
+        },
       },
     },
   },

@@ -1,11 +1,13 @@
 import type { Config } from '../../shared/config/schema'
-import type { BrowseState, ServerRole, ServerStatus } from '../../shared/ipc/contract'
+import type { BrowseState, PipelineProgress, ServerRole, ServerStatus } from '../../shared/ipc/contract'
 import { label, zhCN } from './i18n/zh-CN'
 
 export interface ShellStore {
   browse: BrowseState
   config: Config | null
   llama: Record<ServerRole, ServerStatus | null>
+  /** Images of the current page: done / total (R5.7). */
+  progress: PipelineProgress
   /** Transient message in the status bar (Simplified Chinese), or null. */
   message: string | null
 }
@@ -14,6 +16,7 @@ export const store: ShellStore = $state({
   browse: { url: '', title: '', canGoBack: false, canGoForward: false, loading: false },
   config: null,
   llama: { ocr: null, translate: null },
+  progress: { total: 0, done: 0, failed: 0, active: 0 },
   message: null,
 })
 
@@ -41,6 +44,9 @@ export function initStore(): () => void {
       store.llama[status.role] = status
     }),
     api.on('shell:notice', (notice) => showMessage(label.notice(notice.code))),
+    api.on('pipeline:progress', (progress) => {
+      store.progress = progress
+    }),
   ]
 
   void api.invoke('config:get').then((result) => {
@@ -63,6 +69,10 @@ export async function navigate(input: string): Promise<string | null> {
 
 export function go(action: 'back' | 'forward' | 'reload' | 'stop'): void {
   void window.rawreader.invoke('browse:go', { action })
+}
+
+export function openLogs(): void {
+  void window.rawreader.invoke('app:open-logs')
 }
 
 export async function setToggle(key: 'autoTranslate' | 'overlayVisible', value: boolean): Promise<void> {

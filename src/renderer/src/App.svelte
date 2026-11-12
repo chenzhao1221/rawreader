@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { label, zhCN as t } from './i18n/zh-CN'
-  import { go, initStore, navigate, setToggle, store } from './state.svelte'
+  import { go, initStore, navigate, openLogs, setToggle, store } from './state.svelte'
 
   let address = $state('')
   let focused = $state(false)
@@ -92,9 +92,10 @@
       {/each}
     </span>
     {#if autoTranslate}
-      <span class="note">{t.status.pipelinePlaceholder}</span>
+      <span class="note">{t.status.progress}：{store.progress.done}/{store.progress.total}{#if store.progress.failed > 0}（{t.status.failed} {store.progress.failed}）{/if}</span>
     {/if}
     <span class="spacer"></span>
+    <button type="button" class="link" onclick={openLogs}>{t.status.openLogs}</button>
     {#if addressError}
       <span class="error" role="alert">{addressError}</span>
     {:else if store.message}
@@ -229,6 +230,15 @@
   }
   .spacer {
     flex: 1;
+  }
+  .statusbar .link {
+    height: 20px;
+    min-width: 0;
+    padding: 0 6px;
+    color: #a9acb2;
+    background: transparent;
+    font-size: 12px;
+    text-decoration: underline;
   }
   .title {
     overflow: hidden;

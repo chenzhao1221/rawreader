@@ -1,5 +1,5 @@
 import type { Config, DeepPartial } from '../../shared/config/schema'
-import type { NavResult, ServerRole, ServerStatus } from '../../shared/ipc/contract'
+import type { NavResult, PageConfig, PageImagesBatch, ServerRole, ServerStatus } from '../../shared/ipc/contract'
 import { normalizeAddress } from '../window/address'
 import type { BrowseAction } from '../window/browse-view'
 import type { IpcRegistrar } from './register'
@@ -13,6 +13,11 @@ export interface HandlerDeps {
   setBrowseVisible(visible: boolean): void
   getLlamaStatuses(): ServerStatus[]
   controlLlama(role: ServerRole, action: 'start' | 'stop' | 'restart'): Promise<ServerStatus>
+  openLogFolder(): Promise<void>
+  /** Browse preload announced a new document. Returns the settings it should use. */
+  pageHello(hello: { docId: string; url: string }): PageConfig
+  /** Browse preload reported images near the viewport. */
+  pageImages(batch: PageImagesBatch): void
 }
 
 /** Registers every skeleton channel. All of them accept the shell renderer only. */
@@ -39,4 +44,12 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
   registrar.handle('llama:status', () => deps.getLlamaStatuses())
 
   registrar.handle('llama:control', ({ role, action }) => deps.controlLlama(role, action))
+
+  registrar.handle('app:open-logs', () => deps.openLogFolder())
+
+  // Browse-preload channels. The payloads come from page-adjacent code and are validated by zod in the registrar.
+  registrar.handle('page:hello', (hello) => deps.pageHello(hello))
+  registrar.handle('page:images', (batch) => {
+    deps.pageImages(batch)
+  })
 }
