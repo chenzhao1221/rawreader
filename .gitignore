@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Downloaded models (fetched at first run, not committed)
+models/
+*.gguf
+
+# Build and packager output
+dist/
+out/
+release/
+release-builds/
+dist-electron/
+build/win-unpacked/
+build/*.exe
+build/*.msi
+build/*.blockmap
+build/*.yml
+*.appx
+*.appxbundle
+
+# Logs and caches
+*.log
+logs/
+.cache/
+.eslintcache
+*.tsbuildinfo
+coverage/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# OS and editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# NOTE: Do not ignore .kiro/ — Kiroween requires /.kiro in the repo and not gitignored.
