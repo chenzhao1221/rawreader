@@ -65,6 +65,8 @@ export type ShellNotice = z.infer<typeof ShellNoticeSchema>
 /** Settings the browse preload needs. Pushed on change and returned by page:hello. */
 export const PageConfigSchema = z.object({
   enabled: z.boolean(),
+  /** Global show translation switch; false hides every overlay (R3.3). */
+  overlayVisible: z.boolean(),
   minImageSize: z.number().int().min(0),
   rootMarginPx: z.number().int().min(0),
 })
@@ -102,6 +104,108 @@ export const PipelineProgressSchema = z.object({
   active: z.number().int().min(0),
 })
 export type PipelineProgress = z.infer<typeof PipelineProgressSchema>
+
+const OverlayBoxSchema = z.object({ x1: z.number(), y1: z.number(), x2: z.number(), y2: z.number() })
+
+/** One translated region to draw. Boxes are in the pixel space of the analysed image (width x height). */
+export const OverlayUnitSchema = z.object({
+  kind: z.enum(['bubble', 'free']),
+  box: OverlayBoxSchema,
+  text: z.string().max(2000),
+})
+export type OverlayUnit = z.infer<typeof OverlayUnitSchema>
+
+/** Main to browse preload: a finished image for one element. Carries no image bytes and no source text. */
+export const OverlayResultSchema = z.object({
+  docId: z.string().min(8).max(64),
+  elId: z.string().min(1).max(64),
+  width: z.number().int().min(1),
+  height: z.number().int().min(1),
+  units: z.array(OverlayUnitSchema).max(200),
+})
+export type OverlayResult = z.infer<typeof OverlayResultSchema>
+export const CacheStatsSchema = z.object({ entries: z.number().int().min(0), bytes: z.number().min(0) })
+export type CacheStats = z.infer<typeof CacheStatsSchema>
+
+// ---------------------------------------------------------------------------
+// Models, CUDA backend, licences (shell only)
+// ---------------------------------------------------------------------------
+
+export const ModelRoleSchema = z.enum(['detector', 'ocr', 'ocrMmproj', 'translator'])
+export type ModelRoleName = z.infer<typeof ModelRoleSchema>
+
+export const ModelCheckSchema = z.enum(['unchecked', 'checking', 'ok', 'size-mismatch', 'hash-mismatch', 'unreadable'])
+export type ModelCheck = z.infer<typeof ModelCheckSchema>
+
+export const ModelOriginSchema = z.enum(['config', 'models-dir', 'bundled', 'missing'])
+
+export const ModelDownloadSchema = z.object({
+  status: z.enum(['queued', 'downloading', 'verifying', 'done', 'paused', 'cancelled', 'error']),
+  receivedBytes: z.number().min(0),
+  totalBytes: z.number().min(0),
+  bytesPerSecond: z.number().min(0),
+  source: z.enum(['huggingface', 'modelscope']).nullable(),
+  attempt: z.number().int().min(0),
+  errorCode: z.string().nullable(),
+})
+export type ModelDownload = z.infer<typeof ModelDownloadSchema>
+
+export const ModelItemSchema = z.object({
+  role: ModelRoleSchema,
+  fileName: z.string(),
+  displayName: z.string(),
+  size: z.number().min(0),
+  bundled: z.boolean(),
+  /** Absolute path of the file in use, or null when missing. */
+  path: z.string().nullable(),
+  /** Where the file is expected (target of a download). */
+  expectedPath: z.string(),
+  origin: ModelOriginSchema,
+  check: ModelCheckSchema,
+  download: ModelDownloadSchema.nullable(),
+})
+export type ModelItem = z.infer<typeof ModelItemSchema>
+
+export const ModelsOverviewSchema = z.object({
+  /** Folder downloads go to. */
+  modelsDir: z.string(),
+  /** False in dev (`models.autoDownload: false`): the app never downloads models. */
+  downloadsAllowed: z.boolean(),
+  /** A required model is missing and downloads are allowed: show the first-run panel. */
+  needsSetup: z.boolean(),
+  /** Bytes still to download for missing required files. */
+  missingBytes: z.number().min(0),
+  items: z.array(ModelItemSchema),
+})
+export type ModelsOverview = z.infer<typeof ModelsOverviewSchema>
+
+export const ModelNoticeSchema = z.object({
+  code: z.enum(['canceled', 'size-mismatch', 'downloads-disabled', 'nothing-to-download', 'nothing-found', 'unreadable']),
+  role: ModelRoleSchema.optional(),
+  /** Set with `size-mismatch`: the file the user may still choose to use. */
+  path: z.string().optional(),
+})
+export type ModelNotice = z.infer<typeof ModelNoticeSchema>
+
+export const ModelsActionResultSchema = z.object({ overview: ModelsOverviewSchema, notice: ModelNoticeSchema.nullable() })
+export type ModelsActionResult = z.infer<typeof ModelsActionResultSchema>
+
+export const CudaStatusSchema = z.object({
+  state: z.enum(['absent', 'checking', 'downloading', 'extracting', 'ready', 'error']),
+  /** llama-server.exe is present in the CUDA folder. */
+  installed: z.boolean(),
+  receivedBytes: z.number().min(0),
+  totalBytes: z.number().min(0),
+  errorCode: z.string().nullable(),
+  message: z.string().nullable(),
+  /** Target folder. */
+  dir: z.string(),
+})
+export type CudaStatus = z.infer<typeof CudaStatusSchema>
+
+export const LicenseDocumentSchema = z.object({ id: z.string(), title: z.string(), text: z.string() })
+export const LicensesSchema = z.object({ documents: z.array(LicenseDocumentSchema) })
+export type Licenses = z.infer<typeof LicensesSchema>
 /** Errors crossing IPC are plain objects, never thrown class instances. */
 export const IpcErrorSchema = z.object({ code: z.string(), message: z.string() })
 export type IpcError = z.infer<typeof IpcErrorSchema>
@@ -146,6 +250,22 @@ export const ipc = {
   'app:open-logs': def(z.void(), z.void()),
   'page:hello': def(PageHelloSchema, PageConfigSchema, ['browse']),
   'page:images': def(PageImagesBatchSchema, z.void(), ['browse']),
+  'models:overview': def(z.void(), ModelsOverviewSchema),
+  'models:download': def(
+    z.object({ action: z.enum(['start', 'pause', 'resume', 'cancel']), role: ModelRoleSchema.optional() }),
+    ModelsActionResultSchema,
+  ),
+  'models:pick-folder': def(z.void(), ModelsActionResultSchema),
+  'models:locate-folder': def(z.void(), ModelsActionResultSchema),
+  'models:pick-file': def(z.object({ role: ModelRoleSchema }), ModelsActionResultSchema),
+  'models:use-file': def(z.object({ role: ModelRoleSchema, path: z.string().min(1).max(4096) }), ModelsActionResultSchema),
+  'models:clear-path': def(z.object({ role: ModelRoleSchema }), ModelsActionResultSchema),
+  'cuda:status': def(z.void(), CudaStatusSchema),
+  'cuda:download': def(z.object({ action: z.enum(['start', 'cancel']) }), CudaStatusSchema),
+  'licenses:get': def(z.void(), LicensesSchema),
+  'cache:stats': def(z.void(), CacheStatsSchema),
+  'cache:clear': def(z.void(), CacheStatsSchema),
+  'overlay:font': def(z.void(), z.custom<Uint8Array>((v) => v instanceof Uint8Array).nullable(), ['browse']),
 } as const satisfies Record<InvokeChannel, ChannelDef>
 
 export const events = {
@@ -155,6 +275,9 @@ export const events = {
   'shell:notice': ShellNoticeSchema,
   'page:config': PageConfigSchema,
   'pipeline:progress': PipelineProgressSchema,
+  'overlay:result': OverlayResultSchema,
+  'models:changed': ModelsOverviewSchema,
+  'cuda:changed': CudaStatusSchema,
 } as const satisfies Record<EventChannel, z.ZodType>
 
 // ---------------------------------------------------------------------------

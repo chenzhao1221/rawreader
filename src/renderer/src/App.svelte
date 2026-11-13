@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { label, zhCN as t } from './i18n/zh-CN'
-  import { go, initStore, navigate, openLogs, setToggle, store } from './state.svelte'
+  import SettingsPanel from './settings/SettingsPanel.svelte'
+  import { closeSettings, go, initStore, navigate, openLogs, openSettings, setToggle, store } from './state.svelte'
 
   let address = $state('')
   let focused = $state(false)
@@ -73,11 +74,21 @@
     >
       <span class="knob" class:on={overlayVisible}></span>{t.toolbar.overlayVisible}
     </button>
+    <button
+      type="button"
+      class="settings"
+      aria-pressed={store.panelOpen}
+      onclick={() => (store.panelOpen ? closeSettings() : openSettings())}
+    >
+      {t.toolbar.settings}
+    </button>
   </form>
 
   <!-- The browse view is a native view laid over this area by the main process. -->
   <main class="content">
-    {#if store.browse.url === ''}
+    {#if store.panelOpen}
+      <SettingsPanel />
+    {:else if store.browse.url === ''}
       <p class="hint">{t.browse.emptyHint}</p>
     {/if}
   </main>

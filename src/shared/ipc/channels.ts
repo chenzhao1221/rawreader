@@ -17,6 +17,19 @@ export const INVOKE_CHANNELS = [
   'app:open-logs',
   'page:hello',
   'page:images',
+  'overlay:font',
+  'cache:stats',
+  'cache:clear',
+  'models:overview',
+  'models:download',
+  'models:pick-folder',
+  'models:locate-folder',
+  'models:pick-file',
+  'models:use-file',
+  'models:clear-path',
+  'cuda:status',
+  'cuda:download',
+  'licenses:get',
 ] as const
 
 /** Main to renderer push events (webContents.send). */
@@ -27,6 +40,9 @@ export const EVENT_CHANNELS = [
   'shell:notice',
   'page:config',
   'pipeline:progress',
+  'overlay:result',
+  'models:changed',
+  'cuda:changed',
 ] as const
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number]
