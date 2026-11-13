@@ -22,6 +22,8 @@ export interface ScrollQueueOptions {
 
 const BATCH_DELAY_MS = 80
 const BATCH_MAX_ITEMS = 50
+/** Minimum gap between two scroll/resize driven range checks. */
+const SWEEP_DELAY_MS = 100
 
 /**
  * Finds `<img>` elements, waits until they come near the viewport and reports
@@ -39,6 +41,12 @@ export class ScrollQueue {
   private waiting = new WeakSet<HTMLImageElement>()
   /** Elements already given to the IntersectionObserver for their current URL. */
   private observed = new WeakMap<HTMLImageElement, string>()
+  /** Elements already handed to enqueue for their current URL (either path). */
+  private reported = new WeakMap<HTMLImageElement, string>()
+  /** Listener waiting for DOMContentLoaded because start() ran before <body> existed. */
+  private pendingReady: (() => void) | null = null
+  private scrollListener: (() => void) | null = null
+  private sweepTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly options: ScrollQueueOptions) {
     this.doc = options.doc ?? document
@@ -69,14 +77,16 @@ export class ScrollQueue {
 
   private start(): void {
     const config = this.config
-    if (!config?.enabled || !this.doc.body) return
-
+    if (!config?.enabled) return
+    if (!this.doc.body) {
+      this.deferStart()
+      return
+    }
     this.observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting && entry.target instanceof HTMLImageElement) {
             this.observer?.unobserve(entry.target)
-            this.observed.delete(entry.target)
             this.enqueue(entry.target)
           }
         }
@@ -100,11 +110,55 @@ export class ScrollQueue {
       attributes: true,
       attributeFilter: ['src', 'srcset'],
     })
+
+    // IntersectionObserver may never fire in hidden, occluded or throttled documents, so scrolling
+    // and resizing also trigger a geometry check of the images that are waiting.
+    const view = this.doc.defaultView
+    if (view) {
+      this.scrollListener = () => this.scheduleSweep()
+      view.addEventListener('scroll', this.scrollListener, { capture: true, passive: true })
+      view.addEventListener('resize', this.scrollListener, { passive: true })
+    }
   }
 
+  /**
+   * The preload runs at document start, usually before <body> exists. Wait for DOMContentLoaded
+   * once instead of staying dead until the next config push.
+   */
+  private deferStart(): void {
+    if (this.pendingReady || this.doc.readyState !== 'loading') return
+    const onReady = (): void => {
+      this.doc.removeEventListener('DOMContentLoaded', onReady)
+      this.pendingReady = null
+      this.start()
+    }
+    this.pendingReady = onReady
+    this.doc.addEventListener('DOMContentLoaded', onReady)
+  }
+
+  private scheduleSweep(): void {
+    if (this.sweepTimer !== null) return
+    this.sweepTimer = setTimeout(() => {
+      this.sweepTimer = null
+      this.scan()
+    }, SWEEP_DELAY_MS)
+  }
   /** Stops observing and drops queued, unsent work. Already reported images are not recalled here. */
   stop(): void {
-    this.observer?.disconnect()
+    if (this.pendingReady) {
+      this.doc.removeEventListener('DOMContentLoaded', this.pendingReady)
+      this.pendingReady = null
+    }
+    if (this.scrollListener) {
+      const view = this.doc.defaultView
+      view?.removeEventListener('scroll', this.scrollListener, { capture: true })
+      view?.removeEventListener('resize', this.scrollListener)
+      this.scrollListener = null
+    }
+    if (this.sweepTimer !== null) {
+      clearTimeout(this.sweepTimer)
+      this.sweepTimer = null
+    }    this.observer?.disconnect()
     this.observer = null
     this.mutationObserver?.disconnect()
     this.mutationObserver = null
@@ -113,6 +167,7 @@ export class ScrollQueue {
     this.guard.clear()
     this.waiting = new WeakSet()
     this.observed = new WeakMap()
+    this.reported = new WeakMap()
   }
 
   private scan(): void {
@@ -138,12 +193,17 @@ export class ScrollQueue {
     if (!config?.enabled || !this.observer) return
     const url = this.urlOf(img)
     if (!url || !isReportableUrl(url)) return
-    if (this.observed.get(img) === url) return
+    if (this.reported.get(img) === url) return
+    if (this.observed.get(img) === url) {
+      this.enqueueIfInRange(img)
+      return
+    }
 
     if (img.complete && img.naturalWidth > 0) {
       if (!qualifiesBySize(img.naturalWidth, img.naturalHeight, config.minImageSize)) return
       this.observed.set(img, url)
       this.observer.observe(img)
+      this.enqueueIfInRange(img)
     } else if (!this.waiting.has(img)) {
       this.waiting.add(img)
       img.addEventListener(
@@ -155,6 +215,17 @@ export class ScrollQueue {
         { once: true },
       )
     }
+  }
+
+  /** Geometry path: enqueue right away when the image is already within ootMarginPx of the viewport. */
+  private enqueueIfInRange(img: HTMLImageElement): void {
+    const config = this.config
+    if (!config?.enabled) return
+    const rect = img.getBoundingClientRect()
+    const viewportHeight = this.doc.defaultView?.innerHeight ?? 0
+    if (distanceToViewport(rect.top, rect.bottom, viewportHeight) > config.rootMarginPx) return
+    this.observer?.unobserve(img)
+    this.enqueue(img)
   }
 
   private elementId(img: HTMLImageElement): string {
@@ -170,6 +241,7 @@ export class ScrollQueue {
     const url = this.urlOf(img)
     if (!url || !isReportableUrl(url)) return
     const elId = this.elementId(img)
+    this.reported.set(img, url)
     if (!this.guard.tryEnqueue(elId, url)) return
 
     const rect = img.getBoundingClientRect()

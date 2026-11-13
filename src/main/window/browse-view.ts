@@ -50,6 +50,9 @@ export function createBrowseView(options: BrowseViewOptions): BrowseView {
       webSecurity: true,
       allowRunningInsecureContent: false,
       webviewTag: false,
+      // A hidden, occluded or background window would otherwise pause rAF (overlay geometry) and
+      // IntersectionObserver (image discovery). Same reason as in headless/overlay-smoke.ts.
+      backgroundThrottling: false,
     },
   })
   const wc = view.webContents
