@@ -3,3 +3,6 @@ declare module '*.png' {
   const url: string
   export default url
 }
+
+/** Stylesheets are bundled by Vite. */
+declare module '*.css'

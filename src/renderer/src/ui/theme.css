@@ -1,0 +1,188 @@
+/* One palette, spacing and radius scale for the whole shell. Components read these, never literal colours. */
+:root {
+  --bg: #17181b;
+  --surface: #1f2024;
+  --surface-2: #27292e;
+  --surface-3: #31343a;
+  --border: #33363c;
+  --border-strong: #454951;
+  --text: #e4e6ea;
+  --text-dim: #9a9ea6;
+  --text-faint: #6d717a;
+  --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.14);
+  --good: #4fbf7a;
+  --warn: #e3b55b;
+  --bad: #f07a72;
+  --bad-soft: rgba(240, 122, 114, 0.12);
+
+  --radius-s: 6px;
+  --radius: 10px;
+  --radius-l: 14px;
+  --gap-xs: 4px;
+  --gap-s: 8px;
+  --gap: 12px;
+  --gap-l: 20px;
+  --gap-xl: 32px;
+
+  --font: 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'Cascadia Mono', Consolas, monospace;
+  --text-s: 12px;
+  --text-m: 13px;
+  --text-l: 15px;
+  --text-xl: 20px;
+}
+
+/* Shared form controls, so every page looks the same without per-file styles. */
+.ui-input,
+.ui-select {
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  font: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.ui-input:focus,
+.ui-select:focus {
+  border-color: var(--accent);
+}
+.ui-input.wide {
+  width: 100%;
+}
+.ui-input.mono {
+  font-family: var(--mono);
+  font-size: var(--text-s);
+}
+
+.ui-btn {
+  height: 32px;
+  padding: 0 14px;
+  color: var(--text);
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ui-btn:hover:not(:disabled) {
+  background: var(--border-strong);
+}
+.ui-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ui-btn.primary {
+  background: var(--accent);
+  color: #fff;
+}
+.ui-btn.primary:hover:not(:disabled) {
+  background: #6f9bff;
+}
+.ui-btn.ghost {
+  background: transparent;
+  color: var(--text-dim);
+}
+.ui-btn.ghost:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.ui-btn.danger {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+.ui-btn.danger:hover:not(:disabled) {
+  background: rgba(240, 122, 114, 0.22);
+}
+.ui-btn.small {
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--text-s);
+}
+
+.ui-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: none;
+}
+.ui-dot.good {
+  background: var(--good);
+}
+.ui-dot.warn {
+  background: var(--warn);
+}
+.ui-dot.bad {
+  background: var(--bad);
+}
+.ui-dot.busy {
+  background: var(--accent);
+  animation: ui-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ui-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  color: var(--text-dim);
+  background: var(--surface-3);
+  border-radius: 10px;
+  font-size: var(--text-s);
+  white-space: nowrap;
+}
+.ui-chip.good {
+  color: var(--good);
+  background: rgba(79, 191, 122, 0.12);
+}
+.ui-chip.warn {
+  color: var(--warn);
+  background: rgba(227, 181, 91, 0.12);
+}
+.ui-chip.bad {
+  color: var(--bad);
+  background: var(--bad-soft);
+}
+
+.ui-bar {
+  height: 4px;
+  background: var(--surface-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ui-bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+.ui-path {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: var(--text-s);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-dot.busy {
+    animation: none;
+  }
+  .ui-bar > div {
+    transition: none;
+  }
+}

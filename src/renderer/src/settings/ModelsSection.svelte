@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ModelItem } from '../../../shared/ipc/contract'
-  import { TRANSLATOR_OPTIONS } from '../../../shared/models/translators'
+  import { CUSTOM_TRANSLATOR, TRANSLATOR_OPTIONS } from '../../../shared/models/translators'
   import type { TranslatorId } from '../../../shared/models/translators'
   import { formatBytes, modelLabel, zhCN as t } from '../i18n/zh-CN'
   import {
@@ -13,10 +13,14 @@
     saveConfig,
     store,
   } from '../state.svelte'
+  import Choice from '../ui/Choice.svelte'
+  import Group from '../ui/Group.svelte'
+  import Row from '../ui/Row.svelte'
 
   const models = $derived(store.models)
   const notice = $derived(store.modelNotice)
   const translator = $derived<TranslatorId>(store.config?.models.translator ?? 'index-2b')
+  const local = $derived(store.config?.translate.engine === 'local')
 
   /** Switching the model restarts the translation server; a missing file shows up below with a download button. */
   async function pickTranslator(id: TranslatorId): Promise<void> {
@@ -31,9 +35,8 @@
   const isStopped = (item: ModelItem): boolean =>
     item.download !== null && ['paused', 'cancelled', 'error'].includes(item.download.status)
 
-  const missing = $derived(models?.items.filter((i) => i.path === null) ?? [])
+  const missing = $derived(models?.items.filter((i) => i.path === null && i.size > 0) ?? [])
   const anyActive = $derived(models?.items.some(isActive) ?? false)
-  const anyStopped = $derived(models?.items.some(isStopped) ?? false)
 
   function percent(item: ModelItem): number {
     const d = item.download
@@ -41,238 +44,154 @@
     return Math.min(100, Math.round((d.receivedBytes / d.totalBytes) * 100))
   }
 
-  function stateText(item: ModelItem): string {
-    if (item.download && item.download.status !== 'done') return modelLabel.downloadStatus(item.download.status)
-    if (item.path === null) return t.models.missing
-    return modelLabel.check(item.check)
-  }
-
-  function stateClass(item: ModelItem): string {
+  function dot(item: ModelItem): string {
+    if (isActive(item)) return 'busy'
     if (item.path === null) return 'bad'
     if (item.check === 'ok') return 'good'
     if (item.check === 'size-mismatch' || item.check === 'hash-mismatch' || item.check === 'unreadable') return 'warn'
-    return 'muted'
+    return ''
+  }
+
+  /** The one line under the name: progress while downloading, else where the file is (or should go). */
+  function detail(item: ModelItem): string {
+    const d = item.download
+    if (d && d.status !== 'done' && d.status !== 'queued') {
+      const parts = [`${modelLabel.downloadStatus(d.status)} ${percent(item)}%`]
+      if (d.bytesPerSecond > 0) parts.push(modelLabel.speed(d.bytesPerSecond))
+      if (d.source) parts.push(modelLabel.source(d.source))
+      if (d.errorCode) parts.push(modelLabel.downloadError(d.errorCode))
+      return parts.join(' · ')
+    }
+    if (item.path !== null && item.check !== 'ok' && item.check !== 'unchecked' && item.check !== 'checking') return modelLabel.check(item.check)
+    return item.path ?? item.expectedPath
   }
 </script>
 
 {#if models}
-  {#if models.needsSetup}
-    <div class="setup">
-      <strong>{t.models.setupTitle}</strong>
-      <p>{modelLabel.setupBody(models.missingBytes)}</p>
-    </div>
-  {/if}
-  {#if !models.downloadsAllowed}
-    <p class="muted">{t.models.devNote}</p>
-  {/if}
-
-  {#if store.config?.translate.engine === 'local'}
-    <h2>{t.models.translatorTitle}</h2>
-    <div class="translators">
+  {#if local}
+    <div class="choices">
       {#each TRANSLATOR_OPTIONS as option (option.id)}
-        <label class="translator" class:active={translator === option.id}>
-          <input type="radio" name="translator" value={option.id} checked={translator === option.id} onchange={() => pickTranslator(option.id)} />
-          <strong>{option.displayName}</strong>
-          <span class="muted">
-            {#if option.size > 0}{formatBytes(option.size)} · {t.models.vram(formatBytes(option.vramBytes))}{:else}{t.models.customSize}{/if}
-          </span>
-          <span class="muted note">{option.note}</span>
-          <span class="muted note">{t.models.license}：{option.license}</span>
-        </label>
+        <Choice title={option.displayName} selected={translator === option.id} onselect={() => pickTranslator(option.id)}>
+          {#if option.id === CUSTOM_TRANSLATOR}
+            <span class="ui-chip">GGUF</span>
+          {:else}
+            <span class="ui-chip">{formatBytes(option.size)}</span>
+            <span class="ui-chip">{t.models.vram(formatBytes(option.vramBytes))}</span>
+            {#if option.license.startsWith('Tencent')}<span class="ui-chip warn" title={option.license}>{t.models.regionLimited}</span>{/if}
+          {/if}
+        </Choice>
       {/each}
     </div>
-    <p class="muted small">{t.models.translatorNote}</p>
   {/if}
 
-  <h2>{t.models.folder}</h2>
-  <div class="row">
-    <code class="path">{models.modelsDir}</code>
-    <button type="button" class="btn" onclick={modelsPickFolder}>{t.models.pickFolder}</button>
-    <button type="button" class="btn" onclick={modelsLocateFolder}>{t.models.locateFolder}</button>
-  </div>
+  <Group title={t.models.files}>
+    {#snippet actions()}
+      {#if models.downloadsAllowed && missing.length > 0 && !anyActive}
+        <button type="button" class="ui-btn small primary" onclick={() => missing.forEach((item) => void modelsDownload('start', item.role))}>
+          {t.models.downloadAll(formatBytes(missing.reduce((sum, item) => sum + item.size, 0)))}
+        </button>
+      {/if}
+      {#if anyActive}
+        <button type="button" class="ui-btn small" onclick={() => modelsDownload('pause')}>{t.models.pause}</button>
+      {/if}
+    {/snippet}
+
+    {#each models.items as item (item.role)}
+      <div class="file">
+        <span class="ui-dot {dot(item)}"></span>
+        <div class="file-text">
+          <div class="file-name">
+            {item.displayName}
+            {#if item.size > 0}<span class="size">{formatBytes(item.size)}</span>{/if}
+          </div>
+          <div class="ui-path" title={item.path ?? item.expectedPath}>{detail(item)}</div>
+          {#if isActive(item)}<div class="ui-bar"><div style="width: {percent(item)}%"></div></div>{/if}
+        </div>
+        <div class="file-actions">
+          {#if isActive(item)}
+            <button type="button" class="ui-btn small ghost" onclick={() => modelsDownload('pause', item.role)}>{t.models.pause}</button>
+            <button type="button" class="ui-btn small ghost" onclick={() => modelsDownload('cancel', item.role)}>{t.models.cancel}</button>
+          {:else if isStopped(item) && item.path === null}
+            <button type="button" class="ui-btn small" onclick={() => modelsDownload('resume', item.role)}>
+              {item.download?.status === 'error' ? t.models.retry : t.models.resume}
+            </button>
+          {:else if item.path === null && models.downloadsAllowed && item.size > 0}
+            <button type="button" class="ui-btn small primary" onclick={() => modelsDownload('start', item.role)}>{t.models.downloadOne}</button>
+          {/if}
+          {#if !item.bundled}
+            <button type="button" class="ui-btn small ghost" onclick={() => modelsPickFile(item.role)}>{t.models.pickFile}</button>
+          {/if}
+          {#if item.origin === 'config'}
+            <button type="button" class="ui-btn small ghost" onclick={() => modelsClearPath(item.role)}>{t.models.resetPath}</button>
+          {/if}
+        </div>
+      </div>
+    {/each}
+  </Group>
 
   {#if notice}
     <div class="notice" role="status">
-      <span class={notice.code === 'size-mismatch' || notice.code === 'unreadable' ? 'warn' : 'muted'}>{modelLabel.notice(notice.code)}</span>
+      <span>{modelLabel.notice(notice.code)}</span>
       {#if notice.code === 'size-mismatch' && notice.role && notice.path}
         {@const role = notice.role}
         {@const path = notice.path}
-        <code class="path">{path}</code>
-        <button type="button" class="btn" onclick={() => modelsUseFile(role, path)}>{t.models.useAnyway}</button>
+        <button type="button" class="ui-btn small" onclick={() => modelsUseFile(role, path)}>{t.models.useAnyway}</button>
       {/if}
     </div>
   {/if}
 
-  <table>
-    <thead>
-      <tr>
-        <th>{t.models.columns.name}</th>
-        <th>{t.models.columns.file}</th>
-        <th>{t.models.columns.size}</th>
-        <th>{t.models.columns.state}</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each models.items as item (item.role)}
-        <tr>
-          <td>
-            {item.displayName}
-            {#if item.bundled}<span class="muted tag">{t.models.bundledNote}</span>{/if}
-          </td>
-          <td>
-            <div>{item.fileName}</div>
-            <div class="muted small">{item.path ?? item.expectedPath}</div>
-          </td>
-          <td>{item.size > 0 ? formatBytes(item.size) : '—'}</td>
-          <td>
-            {#if item.download && item.download.status !== 'done' && item.download.status !== 'queued'}
-              <div class="bar" title="{percent(item)}%"><div class="fill" style="width: {percent(item)}%"></div></div>
-              <div class="small">
-                {modelLabel.downloadStatus(item.download.status)} {percent(item)}%
-                {#if item.download.bytesPerSecond > 0}· {modelLabel.speed(item.download.bytesPerSecond)}{/if}
-                {#if item.download.source}· {modelLabel.source(item.download.source)}{/if}
-              </div>
-              {#if item.download.errorCode}
-                <div class="bad small">{modelLabel.downloadError(item.download.errorCode)}</div>
-              {/if}
-            {:else}
-              <span class={stateClass(item)}>{stateText(item)}</span>
-              {#if item.path !== null && item.origin !== 'missing'}
-                <span class="muted small">· {modelLabel.origin(item.origin)}</span>
-              {/if}
-            {/if}
-          </td>
-          <td class="actions">
-            {#if isActive(item)}
-              <button type="button" class="btn" onclick={() => modelsDownload('pause', item.role)}>{t.models.pause}</button>
-              <button type="button" class="btn" onclick={() => modelsDownload('cancel', item.role)}>{t.models.cancel}</button>
-            {:else if isStopped(item) && item.path === null}
-              <button type="button" class="btn" onclick={() => modelsDownload('resume', item.role)}>
-                {item.download?.status === 'error' ? t.models.retry : t.models.resume}
-              </button>
-            {:else if item.path === null && models.downloadsAllowed && item.size > 0}
-              <button type="button" class="btn" onclick={() => modelsDownload('start', item.role)}>{t.models.downloadOne}</button>
-            {/if}
-            <button type="button" class="btn" onclick={() => modelsPickFile(item.role)}>{t.models.pickFile}</button>
-            {#if item.origin === 'config'}
-              <button type="button" class="btn" onclick={() => modelsClearPath(item.role)}>{t.models.resetPath}</button>
-            {/if}
-          </td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
-
-  {#if models.downloadsAllowed}
-    <div class="row">
-      {#if missing.length > 0 && !anyActive}
-        <button type="button" class="btn primary" onclick={() => modelsDownload('start')}>{t.models.download}</button>
-      {/if}
-      {#if anyActive}
-        <button type="button" class="btn" onclick={() => modelsDownload('pause')}>{t.models.pause}</button>
-        <button type="button" class="btn" onclick={() => modelsDownload('cancel')}>{t.models.cancel}</button>
-      {/if}
-      {#if anyStopped && !anyActive}
-        <button type="button" class="btn" onclick={() => modelsDownload('resume')}>{t.models.resume}</button>
-      {/if}
-    </div>
-  {/if}
-{:else}
-  <p class="muted">…</p>
+  <Group title={t.models.folder}>
+    <Row label={t.models.folder} detail={models.modelsDir}>
+      <button type="button" class="ui-btn small ghost" onclick={modelsLocateFolder}>{t.models.locateFolder}</button>
+      <button type="button" class="ui-btn small" onclick={modelsPickFolder}>{t.models.pickFolder}</button>
+    </Row>
+  </Group>
 {/if}
 
 <style>
-  .translators {
+  .choices {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 8px;
-    max-width: 960px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--gap-s);
+    margin-bottom: var(--gap-xl);
   }
-  .translator {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    column-gap: 10px;
-    row-gap: 2px;
-    padding: 10px 12px;
-    background: #26282b;
-    border: 1px solid #393b40;
-    border-radius: 8px;
-    cursor: pointer;
+  .file {
+    display: flex;
+    align-items: center;
+    gap: var(--gap);
+    min-height: 60px;
+    padding: 10px 16px;
+    box-sizing: border-box;
   }
-  .translator.active {
-    border-color: #6b9eff;
+  .file-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
   }
-  .translator input {
-    grid-row: span 4;
-    margin-top: 3px;
+  .file-name {
+    display: flex;
+    align-items: baseline;
+    gap: var(--gap-s);
   }
-  .translator .muted {
-    font-size: 12px;
+  .size {
+    color: var(--text-faint);
+    font-size: var(--text-s);
   }
-  .small {
-    font-size: 12px;
-  }
-  .setup {
-    padding: 10px 14px;
-    margin-bottom: 14px;
-    background: #2a3550;
-    border-radius: 8px;
-  }
-  .setup p {
-    margin: 6px 0 0;
-  }
-  .path {
-    padding: 2px 6px;
-    background: #2b2d30;
-    border-radius: 4px;
-    word-break: break-all;
+  .file-actions {
+    display: flex;
+    gap: var(--gap-xs);
+    flex: none;
   }
   .notice {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    margin: 8px 0 12px;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-  th {
-    padding: 6px 8px;
-    text-align: left;
-    color: #8a8d93;
-    font-weight: 500;
-    border-bottom: 1px solid #393b40;
-  }
-  td {
-    padding: 8px;
-    vertical-align: top;
-    border-bottom: 1px solid #2b2d30;
-  }
-  .small {
-    font-size: 12px;
-  }
-  .tag {
-    margin-left: 6px;
-    font-size: 12px;
-  }
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    justify-content: flex-end;
-  }
-  .bar {
-    width: 220px;
-    height: 6px;
-    background: #393b40;
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    background: #57c27a;
+    gap: var(--gap);
+    margin: calc(var(--gap-l) * -1) 0 var(--gap-xl);
+    padding: 10px 16px;
+    color: var(--warn);
+    background: rgba(227, 181, 91, 0.1);
+    border-radius: var(--radius);
   }
 </style>

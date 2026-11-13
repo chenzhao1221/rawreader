@@ -9,172 +9,121 @@
 
   // The licence view is hidden: the notices ship in the installer (resources/licenses) and in the repository.
   // LicensesSection.svelte is kept so it can come back by adding 'licenses' here.
-  const tabs: SettingsTab[] = ['engine', 'models', 'servers', 'advanced']
+  const tabs: SettingsTab[] = ['engine', 'models', 'advanced', 'servers']
+
+  /** 16px line icons, one per page. */
+  const icons: Record<string, string> = {
+    engine: 'M3 5h7M6.5 3v2M4.5 5c.6 2.6 2.5 4.6 5 5.5M9 5c-.5 2.4-2.2 4.6-5 6M10 13l2.5-6 2.5 6M10.8 11.2h3.4',
+    models: 'M8 2 14 5v6l-6 3-6-3V5l6-3ZM2 5l6 3 6-3M8 8v6',
+    advanced: 'M2 4h7M12 4h2M2 8h2M7 8h7M2 12h9M14 12h0M10.5 2.5v3M5.5 6.5v3M12.5 10.5v3',
+    servers: 'M2.5 3h11v4h-11zM2.5 9h11v4h-11zM5 5h.01M5 11h.01',
+  }
 </script>
 
 <section class="panel" aria-label={t.settings.title}>
-  <header>
+  <div class="side" role="tablist" aria-orientation="vertical">
     <h1>{t.settings.title}</h1>
-    <div class="tabs" role="tablist">
-      {#each tabs as tab (tab)}
-        <button
-          type="button"
-          role="tab"
-          class:active={store.tab === tab}
-          aria-selected={store.tab === tab}
-          onclick={() => selectTab(tab)}
-        >
-          {t.settings.tabs[tab]}
-        </button>
-      {/each}
-    </div>
+    {#each tabs as tab (tab)}
+      <button type="button" role="tab" class:active={store.tab === tab} aria-selected={store.tab === tab} onclick={() => selectTab(tab)}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d={icons[tab]} /></svg>
+        {t.settings.tabs[tab]}
+      </button>
+    {/each}
     <span class="spacer"></span>
-    <button type="button" class="close" onclick={closeSettings}>{t.settings.close}</button>
-  </header>
+    <button type="button" class="close" onclick={closeSettings}>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
+      {t.settings.back}
+    </button>
+  </div>
 
-  <div class="body">
-    {#if store.tab === 'engine'}
-      <EngineSection />
-    {:else if store.tab === 'models'}
-      <ModelsSection />
-    {:else if store.tab === 'servers'}
-      <ServersSection />
-    {:else if store.tab === 'advanced'}
-      <AdvancedSection />
-    {/if}
+  <div class="content">
+    <div class="page">
+      <h2 class="page-title">{t.settings.tabs[store.tab]}</h2>
+      {#if store.tab === 'engine'}
+        <EngineSection />
+      {:else if store.tab === 'models'}
+        <ModelsSection />
+      {:else if store.tab === 'servers'}
+        <ServersSection />
+      {:else if store.tab === 'advanced'}
+        <AdvancedSection />
+      {/if}
+    </div>
   </div>
 </section>
 
 <style>
   .panel {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 200px 1fr;
     width: 100%;
     height: 100%;
     min-height: 0;
-    background: #1e1f22;
-    color: #dfe1e5;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--text-m);
   }
-  header {
+  .side {
     display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 8px 16px;
-    background: #2b2d30;
-    border-bottom: 1px solid #393b40;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--gap-l) var(--gap-s);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
   }
   h1 {
-    margin: 0;
-    font-size: 15px;
+    margin: 0 10px var(--gap);
+    font-size: var(--text-l);
     font-weight: 600;
   }
-  .tabs {
+  .side button {
     display: flex;
-    gap: 4px;
-  }
-  .tabs button {
-    height: 28px;
-    padding: 0 12px;
-    color: #a9acb2;
+    align-items: center;
+    gap: 10px;
+    height: 34px;
+    padding: 0 10px;
+    color: var(--text-dim);
     background: transparent;
     border: 0;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
+    border-radius: var(--radius-s);
     font: inherit;
+    text-align: left;
     cursor: pointer;
   }
-  .tabs button.active {
-    color: #dfe1e5;
-    border-bottom-color: #6b9eff;
+  .side button:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  .side button.active {
+    color: var(--text);
+    background: var(--surface-3);
+  }
+  svg {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   .spacer {
     flex: 1;
   }
-  .close {
-    height: 28px;
-    padding: 0 12px;
-    color: inherit;
-    background: #393b40;
-    border: 0;
-    border-radius: 6px;
-    font: inherit;
-    cursor: pointer;
-  }
-  .body {
-    flex: 1;
+  .content {
     min-height: 0;
     overflow: auto;
-    padding: 16px 24px 32px;
   }
-
-  /* Shared look of the section components. */
-  .body :global(h2) {
-    margin: 22px 0 10px;
-    font-size: 14px;
+  .page {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: var(--gap-xl) var(--gap-xl) 64px;
+  }
+  .page-title {
+    margin: 0 0 var(--gap-l);
+    font-size: var(--text-xl);
     font-weight: 600;
-  }
-  .body :global(h2:first-child) {
-    margin-top: 0;
-  }
-  .body :global(.row) {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    margin: 8px 0;
-  }
-  .body :global(.muted) {
-    color: #8a8d93;
-  }
-  .body :global(.warn) {
-    color: #e8c46a;
-  }
-  .body :global(.bad) {
-    color: #ff8f88;
-  }
-  .body :global(.good) {
-    color: #57c27a;
-  }
-  .body :global(button.btn) {
-    height: 28px;
-    padding: 0 12px;
-    color: inherit;
-    background: #393b40;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    font: inherit;
-    cursor: pointer;
-  }
-  .body :global(button.btn:hover:not(:disabled)) {
-    background: #45484e;
-  }
-  .body :global(button.btn:disabled) {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .body :global(button.btn.primary) {
-    background: #3d6fd8;
-  }
-  .body :global(input[type='text']),
-  .body :global(input[type='number']),
-  .body :global(select) {
-    height: 28px;
-    box-sizing: border-box;
-    padding: 0 8px;
-    color: inherit;
-    background: #2b2d30;
-    border: 1px solid #4e5157;
-    border-radius: 6px;
-    font: inherit;
-  }
-  .body :global(.field) {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 150px;
-  }
-  .body :global(.field > span) {
-    color: #a9acb2;
-    font-size: 12px;
   }
 </style>
