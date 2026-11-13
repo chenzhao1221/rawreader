@@ -118,7 +118,7 @@ describe('ConfigService', () => {
     const backend = memoryBackend()
     new ConfigService({ backend, logger: silentLogger }).update({ ui: { autoTranslate: true, lastUrl: 'https://example.com/a' } })
     const second = new ConfigService({ backend, logger: silentLogger })
-    expect(second.get().ui).toEqual({ autoTranslate: true, overlayVisible: true, bubblesOnly: false, adBlock: true, lastUrl: 'https://example.com/a', openTabs: { urls: [], active: 0 }, webTranslate: { alwaysLangs: [], neverLangs: [], neverSites: [] }, trayHintShown: false, setupDone: false })
+    expect(second.get().ui).toEqual({ autoTranslate: true, overlayVisible: true, bubblesOnly: false, adBlock: true, theme: 'night', lastUrl: 'https://example.com/a', openTabs: { urls: [], active: 0 }, webTranslate: { alwaysLangs: [], neverLangs: [], neverSites: [] }, trayHintShown: false, setupDone: false })
     expect(ConfigSchema.safeParse(backend.stored()).success).toBe(true)
   })
 })

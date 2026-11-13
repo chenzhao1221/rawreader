@@ -23,6 +23,21 @@
 </script>
 
 {#if config}
+  <Group title={t.advanced.appearance}>
+    <Row label={t.advanced.theme}>
+      <Segmented
+        label={t.advanced.theme}
+        value={config.ui.theme}
+        options={[
+          { value: 'night', label: t.advanced.themeNight },
+          { value: 'paper', label: t.advanced.themePaper },
+          { value: 'system', label: t.advanced.themeSystem },
+        ]}
+        onchange={(v) => save({ ui: { theme: v } })}
+      />
+    </Row>
+  </Group>
+
   <Group title={t.advanced.reading}>
     <Row label={t.advanced.ahead}>
       <Segmented

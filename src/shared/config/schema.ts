@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { TRANSLATOR_IDS } from '../models/translators'
+import { THEMES } from '../theme'
 import { findForbiddenExtraArgs } from './extra-args'
 
 /** Detector boxes covering at least this share of the image area are discarded as whole-image false positives. */
@@ -87,6 +88,8 @@ export const ConfigSchema = z.object({
       bubblesOnly: f.bool.default(false),
       /** Ad and tracker blocking in the browse session (Ghostery engine). */
       adBlock: f.bool.default(true),
+      /** Colour theme of the shell: night (dark), paper (light) or follow Windows. */
+      theme: z.enum(THEMES).default('night'),
       lastUrl: z.string().nullable().default(null),
       /** Tabs open at the last exit, reopened on start; main-process only. */
       openTabs: z
@@ -206,7 +209,7 @@ const serverPatchShape = {
 
 export const ConfigPatchSchema = z
   .strictObject({
-    ui: z.strictObject({ autoTranslate: f.bool, overlayVisible: f.bool, bubblesOnly: f.bool, adBlock: f.bool, setupDone: f.bool }).partial(),
+    ui: z.strictObject({ autoTranslate: f.bool, overlayVisible: f.bool, bubblesOnly: f.bool, adBlock: f.bool, setupDone: f.bool, theme: z.enum(THEMES) }).partial(),
     llama: z
       .strictObject({
         backend: f.backend,

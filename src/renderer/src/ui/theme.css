@@ -1,22 +1,58 @@
-/* One palette, spacing and radius scale for the whole shell. Components read these, never literal colours. */
-:root {
-  --bg: #17181b;
-  --surface: #1f2024;
-  --surface-2: #27292e;
-  --surface-3: #31343a;
-  --border: #33363c;
-  --border-strong: #454951;
-  --text: #e4e6ea;
-  --text-dim: #9a9ea6;
-  --text-faint: #6d717a;
-  --accent: #5b8cff;
-  --accent-soft: rgba(91, 140, 255, 0.14);
-  --good: #4fbf7a;
-  --warn: #e3b55b;
-  --bad: #f07a72;
-  --bad-soft: rgba(240, 122, 114, 0.12);
+/* One palette, spacing and radius scale for the whole shell. Components read these, never literal colours.
+ * Two themes: "night" (default, warm black with rose accent) and "paper" (cream with ink and orange accent).
+ * `data-theme` on <html> picks one; --bg and --text must match WINDOW_CHROME in src/shared/theme.ts. */
+:root,
+:root[data-theme='night'] {
+  color-scheme: dark;
+  --bg: #16131a;
+  --surface: #1e1a22;
+  --surface-2: #26212b;
+  --surface-3: #332b37;
+  --border: #352e38;
+  --border-strong: #4a4050;
+  --text: #ece6ea;
+  --text-dim: #a69ca8;
+  --text-faint: #7a707c;
+  --accent: #f06292;
+  --accent-hover: #f47ea6;
+  --accent-soft: rgba(240, 98, 146, 0.14);
+  --on-accent: #ffffff;
+  --good: #7cd6a0;
+  --good-soft: rgba(124, 214, 160, 0.14);
+  --warn: #e8bf6a;
+  --warn-soft: rgba(232, 191, 106, 0.13);
+  --bad: #ff8a80;
+  --bad-soft: rgba(255, 138, 128, 0.13);
+  --knob: #ffffff;
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
 
-  --radius-s: 6px;
+:root[data-theme='paper'] {
+  color-scheme: light;
+  --bg: #f6f3ec;
+  --surface: #fffdf8;
+  --surface-2: #f1ece2;
+  --surface-3: #e7e0d2;
+  --border: #e2dccf;
+  --border-strong: #cfc6b4;
+  --text: #2b2722;
+  --text-dim: #6f675b;
+  --text-faint: #9a9184;
+  --accent: #e0743a;
+  --accent-hover: #ea8550;
+  --accent-soft: rgba(224, 116, 58, 0.12);
+  --on-accent: #ffffff;
+  --good: #2f8a4f;
+  --good-soft: #e3f2e6;
+  --warn: #a86b00;
+  --warn-soft: #fbefd6;
+  --bad: #c8473d;
+  --bad-soft: #fbe4e1;
+  --knob: #ffffff;
+  --shadow: 0 8px 30px rgba(60, 45, 20, 0.12);
+}
+
+:root {
   --radius: 10px;
   --radius-l: 14px;
   --gap-xs: 4px;
@@ -80,10 +116,10 @@
 }
 .ui-btn.primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .ui-btn.primary:hover:not(:disabled) {
-  background: #6f9bff;
+  background: var(--accent-hover);
 }
 .ui-btn.ghost {
   background: transparent;
@@ -98,7 +134,8 @@
   color: var(--bad);
 }
 .ui-btn.danger:hover:not(:disabled) {
-  background: rgba(240, 122, 114, 0.22);
+  background: var(--bad-soft);
+  filter: brightness(1.15);
 }
 .ui-btn.small {
   height: 26px;
@@ -146,11 +183,11 @@
 }
 .ui-chip.good {
   color: var(--good);
-  background: rgba(79, 191, 122, 0.12);
+  background: var(--good-soft);
 }
 .ui-chip.warn {
   color: var(--warn);
-  background: rgba(227, 181, 91, 0.12);
+  background: var(--warn-soft);
 }
 .ui-chip.bad {
   color: var(--bad);

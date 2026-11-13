@@ -2,6 +2,8 @@ import { join } from 'node:path'
 import { BrowserWindow, app } from 'electron'
 import { appIdentity } from '../../shared/app-identity'
 import { TAB_STRIP_HEIGHT } from '../../shared/constants'
+import { WINDOW_CHROME } from '../../shared/theme'
+import type { ThemeName } from '../../shared/theme'
 
 export interface ShellWindow {
   win: BrowserWindow
@@ -12,7 +14,8 @@ export interface ShellWindow {
 }
 
 /** Creates the main window that hosts the shell UI (toolbar, status bar). */
-export function createShellWindow(iconPath?: string): ShellWindow {
+export function createShellWindow(iconPath?: string, theme: ThemeName = 'night'): ShellWindow {
+  const chrome = WINDOW_CHROME[theme]
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -21,11 +24,11 @@ export function createShellWindow(iconPath?: string): ShellWindow {
     show: false,
     title: appIdentity.productName,
     ...(iconPath ? { icon: iconPath } : {}),
-    backgroundColor: '#1e1f22',
+    backgroundColor: chrome.background,
     // No system title bar and no menu bar: the tab strip is the title bar (drag region in App.svelte).
     // Windows still draws its own minimise / maximise / close buttons over the strip's right end.
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#1e1f22', symbolColor: '#dfe1e5', height: TAB_STRIP_HEIGHT },
+    titleBarOverlay: { color: chrome.background, symbolColor: chrome.symbol, height: TAB_STRIP_HEIGHT },
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/shell.cjs'),
@@ -53,4 +56,12 @@ export function createShellWindow(iconPath?: string): ShellWindow {
       : wc.loadFile(join(import.meta.dirname, '../renderer/index.html'))
 
   return { win, webContentsId: wc.id, loaded }
+}
+
+/** Repaints the window background and the Windows caption buttons for a theme. */
+export function applyWindowTheme(win: BrowserWindow, theme: ThemeName): void {
+  if (win.isDestroyed()) return
+  const chrome = WINDOW_CHROME[theme]
+  win.setBackgroundColor(chrome.background)
+  win.setTitleBarOverlay({ color: chrome.background, symbolColor: chrome.symbol, height: TAB_STRIP_HEIGHT })
 }

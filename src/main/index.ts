@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, ipcMain, net, safeStorage, shell as electronShell } from 'electron'
+import { app, ipcMain, nativeTheme, net, safeStorage, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
+import { resolveTheme } from '../shared/theme'
 import { INFOBAR_HEIGHT, MAX_TABS } from '../shared/constants'
 import type { EventChannel } from '../shared/ipc/channels'
 import type { EventPayload } from '../shared/ipc/contract'
@@ -32,7 +33,7 @@ import type { PipelineWiring } from './pipeline/wiring'
 import { SHUTDOWN_TIMEOUT_MS, createQuitGuard } from './shutdown'
 import { isHttpUrl } from './window/address'
 import { setupBrowseSession } from './window/session'
-import { createShellWindow } from './window/shell-window'
+import { applyWindowTheme, createShellWindow } from './window/shell-window'
 import type { ShellWindow } from './window/shell-window'
 import { restorePlan, shortcutFor } from './window/tab-order'
 import { createTabManager } from './window/tabs'
@@ -105,9 +106,12 @@ async function bootstrap(): Promise<void> {
   void adBlock.setEnabled(getConfig().ui.adBlock)
   const secrets = new SecretStore(join(userDataDir, 'secrets.json'), safeStorage)
 
-  const shellWindow = createShellWindow(join(resourcesDir, 'icons', 'icon.png'))
+  const themeNow = () => resolveTheme(getConfig().ui.theme, nativeTheme.shouldUseDarkColors)
+  const shellWindow = createShellWindow(join(resourcesDir, 'icons', 'icon.png'), themeNow())
   shell = shellWindow
   const { win } = shellWindow
+  // "Follow Windows": repaint the caption buttons when the system switches light/dark.
+  nativeTheme.on('updated', () => applyWindowTheme(win, themeNow()))
   win.on('closed', () => log.info('Shell window closed'))
 
   tray = createAppTray({
@@ -357,6 +361,7 @@ async function bootstrap(): Promise<void> {
     llama.handleConfigChange(next, previous)
     pipelineWiring.onConfigChanged(next)
     if (next.ui.adBlock !== previous.ui.adBlock) void adBlock.setEnabled(next.ui.adBlock)
+    if (next.ui.theme !== previous.ui.theme) applyWindowTheme(win, themeNow())
   })
 
   await shellWindow.loaded.catch((error: unknown) => {

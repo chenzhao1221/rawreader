@@ -46,7 +46,7 @@
     left: 3px;
     width: 16px;
     height: 16px;
-    background: #fff;
+    background: var(--knob);
     border-radius: 50%;
     transition: transform 0.18s;
   }

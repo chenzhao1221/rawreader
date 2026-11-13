@@ -17,6 +17,7 @@ import type {
   WebTextBar,
 } from '../../shared/ipc/contract'
 import { label, zhCN } from './i18n/zh-CN'
+import { resolveTheme } from '../../shared/theme'
 
 export type SettingsTab = 'engine' | 'models' | 'servers' | 'advanced' | 'licenses'
 
@@ -77,6 +78,21 @@ function showMessage(text: string): void {
     store.message = null
   }, 6000)
 }
+
+/** Puts the chosen palette on <html>; "system" follows Windows' light/dark setting. */
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
+function applyTheme(): void {
+  const setting = store.config?.ui.theme ?? 'night'
+  document.documentElement.dataset['theme'] = resolveTheme(setting, systemDark.matches)
+}
+systemDark.addEventListener('change', applyTheme)
+// Re-apply whenever the stored theme changes (load, our own save, or another window's).
+$effect.root(() => {
+  $effect(() => {
+    void store.config?.ui.theme
+    applyTheme()
+  })
+})
 
 /** Subscribes to main-process events and loads the initial state. Returns a cleanup function. */
 export function initStore(onFocusAddress: () => void = () => {}): () => void {

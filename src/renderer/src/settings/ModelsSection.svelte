@@ -191,7 +191,7 @@
     margin: calc(var(--gap-l) * -1) 0 var(--gap-xl);
     padding: 10px 16px;
     color: var(--warn);
-    background: rgba(227, 181, 91, 0.1);
+    background: var(--warn-soft);
     border-radius: var(--radius);
   }
 </style>
