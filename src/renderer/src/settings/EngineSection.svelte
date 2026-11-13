@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import type { SecretsStatus } from '../../../shared/ipc/contract'
   import { zhCN as t } from '../i18n/zh-CN'
-  import { saveConfig, store } from '../state.svelte'
+  import { openWizard, saveConfig, store } from '../state.svelte'
 
   type Engine = 'local' | 'openai' | 'gemini'
   let engine = $state<Engine>('local')
@@ -121,6 +121,12 @@
 <div class="row">
   <button type="button" class="btn primary" onclick={save}>{t.settings.apply}</button>
   {#if message}<span class={message.ok ? 'good' : 'bad'} role="status">{message.text}</span>{/if}
+</div>
+
+<h2>{t.engine.wizardTitle}</h2>
+<div class="row">
+  <button type="button" class="btn" onclick={openWizard}>{t.engine.rerunWizard}</button>
+  <span class="muted small">{t.engine.rerunNote}</span>
 </div>
 
 <style>

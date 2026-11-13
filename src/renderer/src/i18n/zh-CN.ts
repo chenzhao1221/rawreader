@@ -54,6 +54,9 @@ export const zhCN = {
     invalid: '有项填得不对：接口地址要用 https://，或本机的 http://127.0.0.1。',
     geminiKeyNote: '在 Google AI Studio（aistudio.google.com）免费申请。',
     keyStorage: '密钥用 Windows 加密保存在本机，只发给你填的接口，不写进日志和配置文件。',
+    wizardTitle: '设置向导',
+    rerunWizard: '重新走一遍设置向导',
+    rerunNote: '只是重新选一遍，已下载的模型和缓存都不会删。',
   },
   setup: {
     title: '第一次使用',
