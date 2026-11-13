@@ -24,6 +24,12 @@ export interface PipelineSettings {
   maxUnitsPerImage: number
 }
 
+/** Persistent result store keyed by image content hash (the identity part of the key is the implementation's concern). */
+export interface PipelineCache {
+  lookup(hash: string): Pick<ImageResult, 'width' | 'height' | 'units'> | null
+  store(hash: string, result: ImageResult): void
+}
+
 export interface PipelineDeps {
   settings(): PipelineSettings
   capture(request: CaptureRequest): Promise<CaptureResult>
@@ -36,6 +42,8 @@ export interface PipelineDeps {
   onResult(subscriber: Subscriber, result: ImageResult): void
   onFailure(subscriber: Subscriber, failure: ImageFailure): void
   onProgress(progress: PipelineProgress): void
+  /** Optional persistent cache; a hit skips detection, OCR and translation. */
+  cache?: PipelineCache
   logger: Logger
 }
 
@@ -142,6 +150,11 @@ export class Pipeline {
     this.emitProgress()
   }
 
+  /** Forgets in-memory results (the persistent cache was cleared). */
+  clearResults(): void {
+    this.registry.clear()
+  }
+
   get currentDocId(): string | null {
     return this.doc?.id ?? null
   }
@@ -212,8 +225,23 @@ export class Pipeline {
       }
 
       let result: ImageResult
+      let cacheHit = false
       try {
-        result = await this.process(doc, captured.image, image.distance, timings)
+        const stored = this.lookupCache(hash)
+        if (stored) {
+          cacheHit = true
+          result = {
+            hash,
+            width: stored.width,
+            height: stored.height,
+            units: stored.units,
+            timings,
+            captureSource: captured.image.source,
+          }
+        } else {
+          result = await this.process(doc, captured.image, image.distance, timings)
+          this.storeCache(hash, result)
+        }
       } catch (error) {
         const failure = toFailure(error)
         const completion = this.registry.markIdle(hash, claim.token, failure)
@@ -223,13 +251,30 @@ export class Pipeline {
       const completion = this.registry.markDone(hash, claim.token, result)
       this.settleCompletion(doc, completion, subscriber, null, result)
       this.deps.logger.info(
-        `image ${hashPrefix(hash)} done: units=${result.units.length} ` +
+        `image ${hashPrefix(hash)} done${cacheHit ? ' (cache hit)' : ''}: units=${result.units.length} ` +
           `capture=${Math.round(timings.captureMs)}ms detect=${Math.round(timings.detectMs)}ms ` +
           `ocr=${Math.round(timings.ocrMs)}ms translate=${Math.round(timings.translateMs)}ms ` +
           `total=${Math.round(performance.now() - started)}ms source=${captured.image.source}`,
       )
     } catch (error) {
       this.settle(doc, [subscriber], null, toFailure(error))
+    }
+  }
+
+  private lookupCache(hash: string): ReturnType<PipelineCache['lookup']> {
+    try {
+      return this.deps.cache?.lookup(hash) ?? null
+    } catch (error) {
+      this.deps.logger.warn(`Cache lookup failed: ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    }
+  }
+
+  private storeCache(hash: string, result: ImageResult): void {
+    try {
+      this.deps.cache?.store(hash, result)
+    } catch (error) {
+      this.deps.logger.warn(`Cache store failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

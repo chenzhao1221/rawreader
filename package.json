@@ -12,13 +12,18 @@
   },
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "npm run check:licenses && electron-vite build",
+    "check:licenses": "node scripts/check-licenses.mjs",
+    "fetch:resources": "node scripts/fetch-resources.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && svelte-check --tsconfig ./tsconfig.web.json",
     "test": "vitest run",
-    "dist:dir": "npm run build && electron-builder --config electron-builder.config.mjs --win --dir",
-    "dist": "npm run build && electron-builder --config electron-builder.config.mjs --win"
+    "smoke:detect-worker": "npm run build && node scripts/smoke-electron.mjs detect-worker",
+    "smoke:overlay": "npm run build && node scripts/smoke-electron.mjs overlay",
+    "dist:dir": "npm run build && npm run fetch:resources && electron-builder --config electron-builder.config.mjs --win --dir",
+    "dist": "npm run build && npm run fetch:resources && electron-builder --config electron-builder.config.mjs --win"
   },
   "dependencies": {
+    "better-sqlite3": "13.1.1",
     "electron-log": "5.4.4",
     "electron-store": "12.0.0",
     "onnxruntime-node": "1.31.1",
@@ -28,6 +33,7 @@
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.19.2",
     "electron": "45.3.1",
     "electron-builder": "26.18.0",

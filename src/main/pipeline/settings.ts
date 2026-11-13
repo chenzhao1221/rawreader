@@ -24,6 +24,7 @@ export function pipelineSettingsFrom(config: Config): PipelineSettings {
 export function pageConfigFrom(config: Config): PageConfig {
   return {
     enabled: config.ui.autoTranslate,
+    overlayVisible: config.ui.overlayVisible,
     minImageSize: config.pipeline.minImageSize,
     rootMarginPx: config.pipeline.rootMarginPx,
   }

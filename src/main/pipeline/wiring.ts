@@ -1,7 +1,7 @@
 import { utilityProcess } from 'electron'
 import type { Session, WebContents } from 'electron'
 import type { Config } from '../../shared/config/schema'
-import type { PageConfig, PageImagesBatch, PipelineProgress, ServerRole, ServerStatus } from '../../shared/ipc/contract'
+import type { OverlayResult, PageConfig, PageImagesBatch, PipelineProgress, ServerRole, ServerStatus } from '../../shared/ipc/contract'
 import { attachCdpCapture } from '../capture/cdp'
 import type { CdpCapture } from '../capture/cdp'
 import { captureImage } from '../capture/capture'
@@ -12,7 +12,9 @@ import { DetectClient } from '../detect/client'
 import type { WorkerLike } from '../detect/client'
 import type { DetectJob, DetectOutcome, DetectService } from '../detect/service'
 import type { Logger } from '../log/log'
+import { toOverlayPayload } from './overlay-payload'
 import { Pipeline } from './scheduler'
+import type { PipelineCache } from './scheduler'
 import { createModelClients, serversUnavailable } from './services'
 import { pageConfigFrom, pipelineSettingsFrom } from './settings'
 
@@ -26,6 +28,10 @@ export interface PipelineWiringOptions {
   workerPath: string
   sendProgress: (progress: PipelineProgress) => void
   sendPageConfig: (config: PageConfig) => void
+  /** Delivers a finished image to the browse preload. */
+  sendOverlay: (payload: OverlayResult) => void
+  /** Persistent result cache, or undefined when it could not be opened. */
+  cache?: PipelineCache
   logger: Logger
 }
 
@@ -33,6 +39,8 @@ export interface PipelineWiring {
   readonly pipeline: Pipeline
   pageHello(hello: { docId: string; url: string }): PageConfig
   pageImages(batch: PageImagesBatch): void
+  /** Forget in-memory results after the persistent cache was cleared. */
+  clearResults(): void
   onConfigChanged(next: Config): void
   dispose(): Promise<void>
 }
@@ -94,11 +102,10 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
         ocr: options.getServerStatus('ocr'),
         translate: options.getServerStatus('translate'),
       }),
-    // Overlay delivery is a later slice; for now results stay in memory and are logged.
-    onResult: (subscriber, result) =>
-      logger.info(`result for element ${subscriber.elId}: ${result.units.length} unit(s), hash ${result.hash.slice(0, 10)}`),
+    onResult: (subscriber, result) => options.sendOverlay(toOverlayPayload(subscriber, result)),
     onFailure: (subscriber, failure) => logger.warn(`image ${subscriber.elId} failed: ${failure.code}: ${failure.message}`),
     onProgress: options.sendProgress,
+    ...(options.cache ? { cache: options.cache } : {}),
     logger,
   })
   pipeline.setEnabled(options.getConfig().ui.autoTranslate)
@@ -118,6 +125,9 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
     },
     pageImages(batch) {
       pipeline.submit(batch)
+    },
+    clearResults() {
+      pipeline.clearResults()
     },
     onConfigChanged(next) {
       pipeline.setEnabled(next.ui.autoTranslate)

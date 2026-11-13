@@ -27,7 +27,7 @@ describe('pipeline settings', () => {
 
   it('derives the page config from the auto-translate toggle and scan settings', () => {
     const config = ConfigSchema.parse({ ui: { autoTranslate: true }, pipeline: { minImageSize: 300, rootMarginPx: 400 } })
-    expect(pageConfigFrom(config)).toEqual({ enabled: true, minImageSize: 300, rootMarginPx: 400 })
+    expect(pageConfigFrom(config)).toEqual({ enabled: true, overlayVisible: true, minImageSize: 300, rootMarginPx: 400 })
     expect(pageConfigFrom(ConfigSchema.parse({})).enabled).toBe(false)
   })
 })

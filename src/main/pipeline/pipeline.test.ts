@@ -5,7 +5,7 @@ import type { DetectJob, DetectOutcome, DetectService } from '../detect/service'
 import { silentLogger } from '../log/log'
 import type { TranslateRequest, TranslateResult } from '../translate/client'
 import { Pipeline } from './scheduler'
-import type { PipelineDeps, PipelineSettings } from './scheduler'
+import type { PipelineCache, PipelineDeps, PipelineSettings } from './scheduler'
 import { ImageRegistry } from './state'
 import type { ImageFailure, ImageResult, Subscriber } from './types'
 
@@ -58,6 +58,7 @@ function setup(overrides: {
   translate?: (request: TranslateRequest) => Promise<TranslateResult>
   serversUnavailable?: () => { code: string; message: string } | null
   settings?: Partial<PipelineSettings>
+  cache?: PipelineCache
 } = {}): Harness {
   const bytesByUrl = overrides.bytesByUrl ?? {}
   const settings: PipelineSettings = {
@@ -94,6 +95,7 @@ function setup(overrides: {
     onResult: (subscriber, result) => results.push({ subscriber, result }),
     onFailure: (subscriber, failure) => failures.push({ subscriber, failure }),
     onProgress: (p) => progress.push(p),
+    ...(overrides.cache ? { cache: overrides.cache } : {}),
     logger: silentLogger,
   }
   const pipeline = new Pipeline(deps)
@@ -451,5 +453,95 @@ describe('ImageRegistry', () => {
     expect(registry.getStatus('a')).toBe('idle') // evicted
     expect(registry.getStatus('b')).toBe('done')
     expect(registry.getStatus('c')).toBe('done')
+  })
+})
+
+describe('Pipeline with the persistent cache', () => {
+  /** In-memory stand-in for the SQLite-backed cache, shared by two pipelines like a restart would. */
+  function memoryCache(): PipelineCache & { rows: Map<string, unknown> } {
+    const rows = new Map<string, Pick<ImageResult, 'width' | 'height' | 'units'>>()
+    return {
+      rows,
+      lookup: (hash) => rows.get(hash) ?? null,
+      store: (hash, result) => void rows.set(hash, { width: result.width, height: result.height, units: result.units }),
+    }
+  }
+
+  it('a second lookup of the same hash skips detect, OCR and translate', async () => {
+    const cache = memoryCache()
+    const same = new Uint8Array([1, 2, 3])
+    const bytes = { 'https://cdn.example/1.png': same, 'https://other.example/same-bytes.png': same }
+
+    const first = setup({ cache, bytesByUrl: bytes })
+    first.pipeline.setEnabled(true)
+    first.pipeline.beginDocument(DOC)
+    first.pipeline.submit(batch([image('rr1', 'https://cdn.example/1.png')]))
+    await first.pipeline.whenIdle()
+    expect(first.results).toHaveLength(1)
+    expect(first.detect).toHaveBeenCalledTimes(1)
+    expect(cache.rows.size).toBe(1)
+
+    // A fresh pipeline (as after a restart) with the same cache.
+    const second = setup({ cache, bytesByUrl: bytes })
+    second.pipeline.setEnabled(true)
+    second.pipeline.beginDocument(DOC)
+    second.pipeline.submit(batch([image('rr9', 'https://other.example/same-bytes.png')]))
+    await second.pipeline.whenIdle()
+    expect(second.capture).toHaveBeenCalledTimes(1)
+    expect(second.detect).not.toHaveBeenCalled()
+    expect(second.ocr).not.toHaveBeenCalled()
+    expect(second.translate).not.toHaveBeenCalled()
+    expect(second.results[0]?.result.units.map((u) => u.translation)).toEqual(first.results[0]?.result.units.map((u) => u.translation))
+    expect(second.results[0]?.subscriber.elId).toBe('rr9')
+  })
+
+  it('a hit does not need the servers to be ready', async () => {
+    const cache = memoryCache()
+    const bytes = { 'https://cdn.example/1.png': new Uint8Array([7, 7]) }
+    const first = setup({ cache, bytesByUrl: bytes })
+    first.pipeline.setEnabled(true)
+    first.pipeline.beginDocument(DOC)
+    first.pipeline.submit(batch([image('rr1', 'https://cdn.example/1.png')]))
+    await first.pipeline.whenIdle()
+
+    const second = setup({ cache, bytesByUrl: bytes, serversUnavailable: () => ({ code: 'SERVER_NOT_READY', message: 'down' }) })
+    second.pipeline.setEnabled(true)
+    second.pipeline.beginDocument(DOC)
+    second.pipeline.submit(batch([image('rr1', 'https://cdn.example/1.png')]))
+    await second.pipeline.whenIdle()
+    expect(second.failures).toEqual([])
+    expect(second.results).toHaveLength(1)
+  })
+
+  it('a cache that throws never fails the image', async () => {
+    const cache: PipelineCache = {
+      lookup: () => {
+        throw new Error('db locked')
+      },
+      store: () => {
+        throw new Error('db locked')
+      },
+    }
+    const h = setup({ cache })
+    h.pipeline.setEnabled(true)
+    h.pipeline.beginDocument(DOC)
+    h.pipeline.submit(batch([image('rr1', 'https://cdn.example/1.png')]))
+    await h.pipeline.whenIdle()
+    expect(h.failures).toEqual([])
+    expect(h.results).toHaveLength(1)
+  })
+
+  it('clearResults drops in-memory results so the cache is consulted again', async () => {
+    const cache = memoryCache()
+    const h = setup({ cache })
+    h.pipeline.setEnabled(true)
+    h.pipeline.beginDocument(DOC)
+    h.pipeline.submit(batch([image('rr1', 'https://cdn.example/1.png')]))
+    await h.pipeline.whenIdle()
+    cache.rows.clear()
+    h.pipeline.clearResults()
+    h.pipeline.submit(batch([image('rr2', 'https://cdn.example/1.png')]))
+    await h.pipeline.whenIdle()
+    expect(h.detect).toHaveBeenCalledTimes(2)
   })
 })
