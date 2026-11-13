@@ -3,11 +3,12 @@
   import { closeSettings, selectTab, store } from '../state.svelte'
   import type { SettingsTab } from '../state.svelte'
   import AdvancedSection from './AdvancedSection.svelte'
-  import LicensesSection from './LicensesSection.svelte'
   import ModelsSection from './ModelsSection.svelte'
   import ServersSection from './ServersSection.svelte'
 
-  const tabs: SettingsTab[] = ['models', 'servers', 'advanced', 'licenses']
+  // The licence view is hidden: the notices ship in the installer (resources/licenses) and in the repository.
+  // LicensesSection.svelte is kept so it can come back by adding 'licenses' here.
+  const tabs: SettingsTab[] = ['models', 'servers', 'advanced']
 </script>
 
 <section class="panel" aria-label={t.settings.title}>
@@ -37,8 +38,6 @@
       <ServersSection />
     {:else if store.tab === 'advanced'}
       <AdvancedSection />
-    {:else}
-      <LicensesSection />
     {/if}
   </div>
 </section>
