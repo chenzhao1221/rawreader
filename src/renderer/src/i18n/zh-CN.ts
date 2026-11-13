@@ -367,6 +367,7 @@ const downloadErrorLabels: Record<string, string> = {
   ALL_SOURCES_FAILED: '所有下载线路都失败了，请检查网络后重试。',
   HASH_MISMATCH: '文件校验未通过。',
   DISK: '无法写入磁盘，请检查剩余空间。',
+  SLOW: '速度太慢，已换线路',
 }
 
 const setupReasons: Record<string, (shortfallBytes: number | null) => string> = {

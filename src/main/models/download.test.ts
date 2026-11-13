@@ -141,6 +141,44 @@ describe('downloadFile (local HTTP server, fixture bytes only)', () => {
     expect(server.requests.filter((r) => r.path === '/missing')).toHaveLength(1)
   })
 
+  it('drops a source that stays too slow and resumes on the next one with a Range request', async () => {
+    server.route('/slow', body, [{ kind: 'slow', chunk: 20_000, delayMs: 50 }])
+    server.route('/fast', body)
+    const errors: string[] = []
+    const result = await run(urls('/slow', '/fast'), { slowWindowMs: 200, onRetry: (_s, _n, e) => errors.push(e.code) })
+    expect(errors).toEqual(['SLOW'])
+    expect(result.source).toBe('modelscope')
+    expect(result.resumedFrom).toBeGreaterThan(0)
+    expect(server.requests.filter((r) => r.path === '/slow')).toHaveLength(1)
+    expect(server.requests.filter((r) => r.path === '/slow')[0]?.range).toBeNull()
+    expect(server.requests.find((r) => r.path === '/fast')?.range).toBe(`bytes=${result.resumedFrom}-`)
+    expect(sha256Of(new Uint8Array(readFileSync(dest)))).toBe(spec.sha256)
+  })
+
+  it('keeps a slow download when it is the last source', async () => {
+    server.route('/only', body, [{ kind: 'slow', chunk: 20_000, delayMs: 50 }])
+    const errors: string[] = []
+    const result = await run(urls('/only'), { slowWindowMs: 200, onRetry: (_s, _n, e) => errors.push(e.code) })
+    expect(errors).toEqual([])
+    expect(result.source).toBe('huggingface')
+    expect(server.requests.filter((r) => r.path === '/only')).toHaveLength(1)
+    expect(sha256Of(new Uint8Array(readFileSync(dest)))).toBe(spec.sha256)
+  })
+
+  it('reports ABORTED, not SLOW, when the user stops a slow attempt', async () => {
+    server.route('/slow', body, [{ kind: 'slow', chunk: 20_000, delayMs: 50 }])
+    server.route('/fast', body)
+    const abort = controller()
+    const attempt = run(urls('/slow', '/fast'), {
+      signal: abort.signal,
+      slowWindowMs: 200,
+      onProgress: (n) => n >= 20_000 && abort.abort(),
+    })
+    await expect(attempt).rejects.toMatchObject({ code: 'ABORTED' })
+    expect(server.requests.filter((r) => r.path === '/fast')).toHaveLength(0)
+    expect(existsSync(dest)).toBe(false)
+  })
+
   it('reports ALL_SOURCES_FAILED when no source works and keeps no destination file', async () => {
     server.route('/x', body, [{ kind: 'status', status: 500 }])
     await expect(run(urls('/x'))).rejects.toMatchObject({ code: 'ALL_SOURCES_FAILED' })

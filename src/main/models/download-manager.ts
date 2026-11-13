@@ -186,6 +186,10 @@ export class DownloadManager {
           this.emit(false)
         },
         onRetry: (source, attempt, error) => {
+          if (error.code === 'SLOW') {
+            this.options.logger.warn(`${entry.fileName}: ${source} attempt ${attempt} 太慢，换线路 (${error.message})`)
+            return
+          }
           this.options.logger.warn(`${entry.fileName}: ${source} attempt ${attempt} failed: ${error.code} ${error.message}`)
         },
       })
