@@ -5,7 +5,7 @@ describe('ConfigSchema defaults', () => {
   it('matches the documented defaults', () => {
     expect(ConfigSchema.parse({})).toEqual({
       schemaVersion: 1,
-      ui: { autoTranslate: false, overlayVisible: true, bubblesOnly: false, lastUrl: null },
+      ui: { autoTranslate: false, overlayVisible: true, bubblesOnly: false, lastUrl: null, trayHintShown: false },
       llama: {
         build: 'b12318',
         backend: 'vulkan',
@@ -77,6 +77,7 @@ describe('ConfigPatchSchema', () => {
 
   it('rejects fields outside the whitelist', () => {
     expect(ConfigPatchSchema.safeParse({ ui: { lastUrl: 'https://example.com' } }).success).toBe(false)
+    expect(ConfigPatchSchema.safeParse({ ui: { trayHintShown: true } }).success).toBe(false)
     expect(ConfigPatchSchema.safeParse({ schemaVersion: 1 }).success).toBe(false)
     expect(ConfigPatchSchema.safeParse({ llama: { build: 'b1' } }).success).toBe(false)
   })

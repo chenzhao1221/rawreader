@@ -34,6 +34,8 @@ import type { BrowseView } from './window/browse-view'
 import { setupBrowseSession } from './window/session'
 import { createShellWindow } from './window/shell-window'
 import type { ShellWindow } from './window/shell-window'
+import { createAppTray, showWindow } from './window/tray'
+import type { AppTray } from './window/tray'
 
 const log = createLogger('main')
 
@@ -65,6 +67,9 @@ let openCache: ResultCache | null = null
 let models: ModelService | null = null
 let cuda: CudaInstaller | null = null
 let disposeIpc: (() => void) | null = null
+let tray: AppTray | null = null
+/** Set once a real quit starts (tray "quit", OS shutdown); until then closing the window only hides it. */
+let quitting = false
 
 function sendToShell<E extends EventChannel>(channel: E, payload: EventPayload<E>): void {
   // Accessing `win.webContents` on a destroyed window throws, so check the window first.
@@ -82,10 +87,31 @@ async function bootstrap(): Promise<void> {
 
   const browseSession = setupBrowseSession((notice) => sendToShell('shell:notice', notice))
 
-  const shellWindow = createShellWindow()
+  const shellWindow = createShellWindow(join(resourcesDir, 'icons', 'icon.png'))
   shell = shellWindow
   const { win } = shellWindow
   win.on('closed', () => log.info('Shell window closed'))
+
+  tray = createAppTray({
+    iconPath: join(resourcesDir, 'icons', 'tray.png'),
+    getWindow: () => (win.isDestroyed() ? null : win),
+    quit: () => app.quit(),
+  })
+  // Windows logoff/shutdown does not emit before-quit; let the close through so the OS is not blocked.
+  win.on('session-end', () => {
+    quitting = true
+  })
+  // Closing the window hides it to the tray; the models keep running. Only a real quit closes it.
+  win.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    win.hide()
+    log.info('Shell window hidden to the tray')
+    if (!getConfig().ui.trayHintShown) {
+      tray?.showHint()
+      updateConfig({ ui: { trayHintShown: true } })
+    }
+  })
 
   const browseView = createBrowseView({
     win,
@@ -249,16 +275,17 @@ if (headlessFlag) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    const win = shell?.win
-    if (!win || win.isDestroyed()) return
-    if (win.isMinimized()) win.restore()
-    win.focus()
+    showWindow(shell?.win ?? null)
   })
 
-  // Exit code: a normal window close runs shutdown() and then app.quit(), which exits 0
-  // (verified by closing the window of a built app: exit code 0, both llama-server PIDs gone).
-  // An exit code of 1 seen in an earlier smoke run could not be reproduced and is attributed to
-  // the test harness (process ended from outside). app.exit() is only used by the hard timeout.
+  // Registered before the quit guard so the window's close handler lets the close through.
+  app.on('before-quit', () => {
+    quitting = true
+  })
+
+  // Exit code: closing the window only hides it to the tray. The tray's "quit" calls app.quit(), which
+  // runs shutdown() through the guard and exits 0 with both llama-server PIDs gone.
+  // app.exit() is only used by the hard timeout.
   app.on('before-quit', createQuitGuard({
     timeoutMs: SHUTDOWN_TIMEOUT_MS,
     logger: log,
@@ -273,6 +300,8 @@ if (headlessFlag) {
       openCache = null
       await manager?.stopAll()
       browse?.destroy()
+      tray?.destroy()
+      tray = null
     },
   }))
 

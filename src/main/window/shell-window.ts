@@ -11,7 +11,7 @@ export interface ShellWindow {
 }
 
 /** Creates the main window that hosts the shell UI (toolbar, status bar). */
-export function createShellWindow(): ShellWindow {
+export function createShellWindow(iconPath?: string): ShellWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -19,6 +19,7 @@ export function createShellWindow(): ShellWindow {
     minHeight: 480,
     show: false,
     title: appIdentity.productName,
+    ...(iconPath ? { icon: iconPath } : {}),
     backgroundColor: '#1e1f22',
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/shell.cjs'),

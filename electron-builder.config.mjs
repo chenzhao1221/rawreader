@@ -31,13 +31,14 @@ export default {
   extraResources: [
     { from: 'resources/llama/vulkan', to: 'llama/vulkan', filter: ['**/*', '!.rawreader-build.json'] },
     { from: 'resources/detector', to: 'detector' },
+    { from: 'resources/icons', to: 'icons', filter: ['*.png'] },
     { from: 'resources/fonts/NotoSansSC-Bold-subset.woff', to: 'fonts/NotoSansSC-Bold-subset.woff' },
     // Shown by the in-app "open source licences" view.
     { from: 'LICENSE', to: 'licenses/LICENSE' },
     { from: 'THIRD_PARTY_NOTICES.md', to: 'licenses/THIRD_PARTY_NOTICES.md' },
     { from: 'resources/fonts/OFL.txt', to: 'licenses/NotoSansSC-OFL.txt' },
   ],
-  win: { target: 'nsis' },
+  win: { target: 'nsis', icon: 'resources/icons/icon.png' },
   nsis: {
     oneClick: false,
     perMachine: false,
