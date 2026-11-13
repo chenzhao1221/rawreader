@@ -1,6 +1,17 @@
 import type { Config } from '../../shared/config/schema'
 import type { ServerRole, ServerStatus } from '../../shared/ipc/contract'
 import { OcrClient } from '../ocr/client'
+import { RETRY_SCALE, looksLikeFormula } from '../ocr/garbled'
+
+/** Enlarges a PNG crop for a second OCR pass. sharp is loaded on first use only. */
+async function upscale(png: Uint8Array): Promise<Uint8Array> {
+  const { default: sharp } = await import('sharp')
+  const image = sharp(png)
+  const { width, height } = await image.metadata()
+  if (!width || !height) throw new Error('Unreadable crop')
+  const out = await image.resize(width * RETRY_SCALE, height * RETRY_SCALE, { kernel: 'lanczos3' }).png().toBuffer()
+  return new Uint8Array(out)
+}
 import { TranslateClient } from '../translate/client'
 import type { TranslateRequest, TranslateResult } from '../translate/client'
 import type { PipelineDeps } from './scheduler'
@@ -34,12 +45,20 @@ export function createModelClients(
   const clientFor = (config: Config): TranslateClient => clientForConfig(config, getStatus)
   return {
     ocr: {
-      recognize(png, signal) {
+      async recognize(png, signal) {
         const config = getConfig()
-        return new OcrClient({
+        const client = new OcrClient({
           getPort: () => effectivePort(getStatus('ocr'), config.llama.ocr.port),
           model: config.llama.ocr.alias,
-        }).recognize(png, signal)
+        })
+        const first = await client.recognize(png, signal)
+        if (!first.ok || !looksLikeFormula(first.text)) return first
+        // A formula instead of lettering: read the crop again at twice the size.
+        const larger = await upscale(png).catch(() => null)
+        const second = larger ? await client.recognize(larger, signal) : null
+        if (second?.ok && !looksLikeFormula(second.text)) return second
+        // Still a formula: the text is lost. Empty text means "no text": not translated, not drawn.
+        return { ...first, text: '' }
       },
     },
     translator: {
