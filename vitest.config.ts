@@ -9,7 +9,7 @@ const skipE2e = process.env['RAWREADER_E2E'] !== '1'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
     exclude: [
       ...configDefaults.exclude,
       ...(skipWindowsOnly ? ['src/**/*.win.test.ts'] : []),
