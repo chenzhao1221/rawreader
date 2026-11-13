@@ -1,4 +1,4 @@
-﻿import { EventEmitter } from 'node:events'
+import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { existsSync } from 'node:fs'
@@ -40,7 +40,7 @@ describe('LlamaServer lifecycle (fake process)', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'rr-server-'))
   })
-  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+  afterEach(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))
 
   function setup(overrides: Partial<ServerDeps> = {}, role: 'ocr' | 'translate' = 'translate') {
     const statuses: ServerStatus[] = []

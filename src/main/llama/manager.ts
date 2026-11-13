@@ -107,6 +107,19 @@ export class LlamaManager {
     )
   }
 
+  /**
+   * Starts servers that are stopped or failed, except ones the user stopped by hand. Used when model files
+   * arrive (download finished, file chosen) after the servers already reported MODEL_MISSING.
+   */
+  async startMissing(): Promise<void> {
+    const config = this.options.getConfig()
+    const wanted = SERVER_ROLES.filter((role) => {
+      const state = this.servers[role].getStatus().state
+      return config.llama[role].autostart && !this.userStopped.has(role) && (state === 'stopped' || state === 'error')
+    })
+    await Promise.all(wanted.map((role) => this.servers[role].start({ resetCrashes: true })))
+  }
+
   /** Stops both servers in parallel. Awaited by the quit sequence. */
   async stopAll(): Promise<void> {
     await Promise.all(SERVER_ROLES.map((role) => this.servers[role].stop()))

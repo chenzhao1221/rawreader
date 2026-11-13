@@ -120,4 +120,26 @@ describe('LlamaManager', () => {
     expect(manager.getStatus('ocr').state).toBe('stopped')
     expect(manager.getStatus('translate').state).toBe('error')
   })
-})
+  it('startMissing retries failed servers but leaves stopped-by-user and autostart-off ones alone', async () => {
+    const config = ConfigSchema.parse({ llama: { ocr: { autostart: false } } })
+    const { manager } = create({ info: null, config })
+    await manager.startAll()
+    expect(manager.getStatus('translate').state).toBe('error')
+    const before = manager.getStatuses().length
+    await manager.control('translate', 'stop')
+    expect(manager.getStatus('translate').state).toBe('stopped')
+    await manager.startMissing()
+    // Stopped by the user: not started again. OCR has autostart off: untouched.
+    expect(manager.getStatus('translate').state).toBe('stopped')
+    expect(manager.getStatus('ocr').state).toBe('stopped')
+    expect(before).toBe(2)
+  })
+
+  it('startMissing starts a server that failed earlier (for example after models arrived)', async () => {
+    const { manager } = create({ info: null })
+    await manager.startAll()
+    expect(manager.getStatus('ocr').errorCode).toBe('BINARY_MISSING')
+    await manager.startMissing()
+    expect(manager.getStatus('ocr').state).toBe('error')
+    expect(manager.getStatus('ocr').errorCode).toBe('BINARY_MISSING')
+  })})
