@@ -160,4 +160,19 @@ describe('isCacheable', () => {
       expect(isCacheable({ ...image(1), units: [unit({ status })] })).toBe(false)
     }
   })
+
+  it('stores skipped free units (bubbles-only) and reads them back unchanged', () => {
+    const partial = { ...image(1), units: [unit(), unit({ kind: 'free', ocrText: '', translation: '', status: 'skipped' })] }
+    expect(isCacheable(partial)).toBe(true)
+    const dir = mkdtempSync(join(tmpdir(), 'rr-cache-'))
+    const cache = openResultCache(join(dir, 'cache.db'), { getMaxBytes: () => 2 * 1024 ** 3, logger: silentLogger })
+    if (!cache) throw new Error('cache did not open')
+    try {
+      expect(cache.put('k', 'h', partial)).toBe(true)
+      expect(cache.get('k')?.units.map((u) => u.status)).toEqual(['ok', 'skipped'])
+    } finally {
+      cache.close()
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
+  })
 })

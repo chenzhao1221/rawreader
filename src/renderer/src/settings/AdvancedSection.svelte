@@ -5,6 +5,7 @@
   let ocrConcurrency = $state<number | null>(null)
   let translateConcurrency = $state<number | null>(null)
   let readingDirection = $state<'ltr' | 'rtl'>('ltr')
+  let bubblesOnly = $state(false)
   let huggingface = $state('')
   let modelscope = $state('')
   let cacheGb = $state(2)
@@ -16,6 +17,7 @@
     ocrConcurrency = config.pipeline.ocrConcurrency
     translateConcurrency = config.pipeline.translateConcurrency
     readingDirection = config.pipeline.readingDirection
+    bubblesOnly = config.ui.bubblesOnly
     huggingface = config.models.mirrors.huggingface
     modelscope = config.models.mirrors.modelscope
     cacheGb = Math.round((config.cache.maxBytes / 1024 ** 3) * 100) / 100
@@ -25,6 +27,7 @@
 
   async function save(): Promise<void> {
     const ok = await saveConfig({
+      ui: { bubblesOnly },
       pipeline: { ocrConcurrency, translateConcurrency, readingDirection },
       models: { mirrors: { huggingface: huggingface.trim(), modelscope: modelscope.trim() } },
       cache: { maxBytes: Math.max(0, Math.round(cacheGb * 1024 ** 3)) },
@@ -59,6 +62,10 @@
     </select>
   </label>
 </div>
+<div class="row">
+  <label class="check"><input type="checkbox" bind:checked={bubblesOnly} />{t.advanced.bubblesOnly}</label>
+</div>
+<p class="muted small">{t.advanced.bubblesOnlyNote}</p>
 
 <h2>{t.advanced.mirrors}</h2>
 <div class="row">
@@ -87,6 +94,11 @@
 <div class="row"><button type="button" class="btn" onclick={openLogs}>{t.advanced.openLogs}</button></div>
 
 <style>
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
   .long {
     min-width: 320px;
   }

@@ -3,7 +3,11 @@ import type { Bbox } from '../detect/types'
 
 export type { PageImage }
 
-export type UnitStatus = 'ok' | 'no-text' | 'ocr-failed' | 'translate-failed' | 'echo'
+/**
+ * skipped marks a unit the pipeline deliberately left alone (free text while bubbles-only is on). The unit is
+ * still detected and stored, so turning the setting off later can fill it in.
+ */
+export type UnitStatus = 'ok' | 'no-text' | 'ocr-failed' | 'translate-failed' | 'echo' | 'skipped'
 
 /** One translated region of an image. */
 export interface UnitResult {

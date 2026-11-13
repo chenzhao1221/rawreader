@@ -5,7 +5,7 @@ describe('ConfigSchema defaults', () => {
   it('matches the documented defaults', () => {
     expect(ConfigSchema.parse({})).toEqual({
       schemaVersion: 1,
-      ui: { autoTranslate: false, overlayVisible: true, lastUrl: null },
+      ui: { autoTranslate: false, overlayVisible: true, bubblesOnly: false, lastUrl: null },
       llama: {
         build: 'b12318',
         backend: 'vulkan',
@@ -79,6 +79,11 @@ describe('ConfigPatchSchema', () => {
     expect(ConfigPatchSchema.safeParse({ ui: { lastUrl: 'https://example.com' } }).success).toBe(false)
     expect(ConfigPatchSchema.safeParse({ schemaVersion: 1 }).success).toBe(false)
     expect(ConfigPatchSchema.safeParse({ llama: { build: 'b1' } }).success).toBe(false)
+  })
+
+  it('accepts the bubblesOnly toggle in a patch and rejects non-booleans', () => {
+    expect(ConfigPatchSchema.parse({ ui: { bubblesOnly: true } })).toEqual({ ui: { bubblesOnly: true } })
+    expect(ConfigPatchSchema.safeParse({ ui: { bubblesOnly: 'yes' } }).success).toBe(false)
   })
 
   it('rejects invalid values', () => {

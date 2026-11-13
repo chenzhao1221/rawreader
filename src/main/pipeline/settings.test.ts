@@ -16,6 +16,11 @@ describe('pipeline settings', () => {
     })
   })
 
+  it('keeps free units by default and follows the bubblesOnly toggle', () => {
+    expect(pipelineSettingsFrom(ConfigSchema.parse({})).bubblesOnly).toBe(false)
+    expect(pipelineSettingsFrom(ConfigSchema.parse({ ui: { bubblesOnly: true } })).bubblesOnly).toBe(true)
+  })
+
   it('prefers explicit pipeline concurrency', () => {
     const config = ConfigSchema.parse({
       llama: { translate: { parallel: 2 } },

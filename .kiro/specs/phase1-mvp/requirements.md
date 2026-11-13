@@ -82,6 +82,7 @@ Scope and decisions come from `.kiro/steering/product.md` and `.kiro/specs/modul
 6. THE SYSTEM SHALL order units by reading order (top to bottom, then left to right; right to left when configured).
 7. IF the detector fails to load or run, THEN THE SYSTEM SHALL mark the image as `error` and keep the app responsive.
 8. THE SYSTEM SHALL discard every detected box (bubble or text) whose area is at least 85% of the image area, configurable as `pipeline.maxBoxImageCoverage` (ratio in (0, 1], default 0.85), as a whole-image false positive such as a header logo or cover. This filter runs before unit building and does not weaken R6.4 or R6.5: bubble-only boxes below the threshold and free text units are kept.
+9. WHERE the setting `ui.bubblesOnly` is on (default off), THE SYSTEM SHALL NOT OCR, translate or draw free text units (`kind: free`). Detection still produces them and the result cache still stores them, so this does not weaken R6.5: the setting only skips processing and presenting them, and turning it off shows them again without re-detecting.
 
 ## R7. OCR (M4)
 
@@ -123,6 +124,7 @@ Scope and decisions come from `.kiro/steering/product.md` and `.kiro/specs/modul
 3. THE SYSTEM SHALL store only results (boxes, OCR text, translations) and SHALL NOT store raw image bytes on disk.
 4. WHEN the cache exceeds its cap (default 2 GB), THE SYSTEM SHALL evict least-recently-used entries until it is under 90 % of the cap.
 5. THE SYSTEM SHALL provide a "clear cache" action in settings.
+6. WHEN a captured image's content hash matches a result the app still holds in memory (for example after a reload), THE SYSTEM SHALL treat it as a cache hit: skip detection, OCR and translation, deliver the result, and log it as a cache hit.
 
 ## R11. llama-server process management (M9)
 

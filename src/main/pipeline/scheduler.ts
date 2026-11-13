@@ -24,6 +24,8 @@ export interface PipelineSettings {
   ocrPadding: number
   /** Upper bound on units per image; protects the servers from detector noise. */
   maxUnitsPerImage: number
+  /** Skip free-text units: no OCR, no translation, nothing delivered for them. Read per image and per delivery. */
+  bubblesOnly: boolean
 }
 
 /** Persistent result store keyed by image content hash (the identity part of the key is the implementation's concern). */
@@ -216,8 +218,19 @@ export class Pipeline {
       if (!captured.ok) throw new StageFailure(captured.code, captured.detail ?? 'capture failed')
 
       const { hash } = captured.image
-      const claim = this.registry.claim(hash, subscriber)
+      let claim = this.registry.claim(hash, subscriber)
+      if (claim.kind === 'done' && hasSkippedUnits(claim.result) && !this.deps.settings().bubblesOnly) {
+        // The kept result left free text out (bubbles-only was on); the setting is off now, so run it fully.
+        this.registry.discardResult(hash)
+        claim = this.registry.claim(hash, subscriber)
+      }
       if (claim.kind === 'done') {
+        // A result kept in memory from an earlier document (reload, back/forward, same bytes elsewhere) is a cache hit too.
+        this.deps.logger.info(
+          `image ${hashPrefix(hash)} done (cache hit): units=${claim.result.units.length} ` +
+            `capture=${Math.round(timings.captureMs)}ms detect=0ms ocr=0ms translate=0ms ` +
+            `total=${Math.round(performance.now() - started)}ms source=${captured.image.source} cache=memory`,
+        )
         this.settle(doc, [subscriber], claim.result, null)
         return
       }
@@ -229,7 +242,9 @@ export class Pipeline {
       let result: ImageResult
       let cacheHit = false
       try {
-        const stored = this.lookupCache(hash)
+        let stored = this.lookupCache(hash)
+        // A row that skipped free text is incomplete once bubbles-only is off: treat it as a miss and overwrite it.
+        if (stored && hasSkippedUnits(stored) && !this.deps.settings().bubblesOnly) stored = null
         if (stored) {
           cacheHit = true
           result = {
@@ -256,7 +271,8 @@ export class Pipeline {
         `image ${hashPrefix(hash)} done${cacheHit ? ' (cache hit)' : ''}: units=${result.units.length} ` +
           `capture=${Math.round(timings.captureMs)}ms detect=${Math.round(timings.detectMs)}ms ` +
           `ocr=${Math.round(timings.ocrMs)}ms translate=${Math.round(timings.translateMs)}ms ` +
-          `total=${Math.round(performance.now() - started)}ms source=${captured.image.source}`,
+          `total=${Math.round(performance.now() - started)}ms source=${captured.image.source}` +
+          (cacheHit ? ' cache=sqlite' : ''),
       )
     } catch (error) {
       this.settle(doc, [subscriber], null, toFailure(error))
@@ -297,6 +313,8 @@ export class Pipeline {
   }
 
   private settle(doc: DocState, subscribers: Subscriber[], result: ImageResult | null, failure: ImageFailure | null): void {
+    // Bubbles-only is applied when presenting, so stored and in-memory results keep their free units.
+    const delivered = result && this.deps.settings().bubblesOnly ? withoutFreeUnits(result) : result
     for (const subscriber of subscribers) {
       const live = this.doc !== null && this.doc.id === subscriber.docId
       const target = live ? this.doc : null
@@ -307,7 +325,7 @@ export class Pipeline {
       }
       // Late results never reach a document that is gone, nor a disabled pipeline (R3.2, R5.5).
       if (!live || !this.enabled || this.disposed) continue
-      if (result) this.deps.onResult(subscriber, result)
+      if (delivered) this.deps.onResult(subscriber, delivered)
       else if (failure && failure.code !== 'CANCELLED') this.deps.onFailure(subscriber, failure)
     }
     if (doc === this.doc || this.doc === null) this.emitProgress()
@@ -349,13 +367,18 @@ export class Pipeline {
     }
     if (units.length === 0) return { ...base, units: [] }
 
+    // Bubbles-only: free units stay in the result as `skipped` and never reach OCR or translation.
+    const skipFree = settings.bubblesOnly
+    const work = skipFree ? units.filter((unit) => unit.kind !== 'free') : units
+    if (work.length === 0) return { ...base, units: units.map(skippedUnit) }
+
     const unavailable = this.deps.serversUnavailable()
     if (unavailable) throw new StageFailure(unavailable.code, unavailable.message)
 
     // OCR: one request per unit, bounded by the OCR queue.
     const ocrStart = performance.now()
     const texts = await Promise.all(
-      units.map(async (unit): Promise<{ text: string; failed: boolean }> => {
+      work.map(async (unit): Promise<{ text: string; failed: boolean }> => {
         if (unit.ocrPng === null) return { text: '', failed: false }
         const ocrPng = unit.ocrPng
         const result = await this.stage(doc, 'ocr', distance, () => this.deps.ocr.recognize(ocrPng, doc.controller.signal))
@@ -368,7 +391,7 @@ export class Pipeline {
     const sources = texts.map((t) => t.text)
     const translateStart = performance.now()
     const outcomes = await Promise.all(
-      units.map(async (_unit, index): Promise<{ translation: string; failed: boolean; echo: boolean }> => {
+      work.map(async (_unit, index): Promise<{ translation: string; failed: boolean; echo: boolean }> => {
         if ((sources[index] ?? '').trim().length === 0) return { translation: '', failed: false, echo: false }
         const result = await this.stage(doc, 'translate', distance, () =>
           this.deps.translator.translate({ sources, index, signal: doc.controller.signal }),
@@ -380,7 +403,7 @@ export class Pipeline {
     )
     timings.translateMs = performance.now() - translateStart
 
-    const results: UnitResult[] = units.map((unit, index) => {
+    const workResults: UnitResult[] = work.map((unit, index) => {
       const ocr = texts[index] as { text: string; failed: boolean }
       const tr = outcomes[index] as { translation: string; failed: boolean; echo: boolean }
       let status: UnitResult['status'] = 'ok'
@@ -398,6 +421,9 @@ export class Pipeline {
         status,
       }
     })
+    // Put skipped free units back at their detected positions.
+    let next = 0
+    const results = units.map((unit) => (skipFree && unit.kind === 'free' ? skippedUnit(unit) : (workResults[next++] as UnitResult)))
     return { ...base, units: results }
   }
 
@@ -445,6 +471,31 @@ export class Pipeline {
   private emitProgress(): void {
     this.deps.onProgress(this.getProgress())
   }
+}
+
+type DetectedUnit = DetectOk['units'][number]
+
+/** A free unit that bubbles-only left out: geometry only, no text, never drawn. */
+function skippedUnit(unit: DetectedUnit): UnitResult {
+  return {
+    kind: unit.kind,
+    bubbleOnly: unit.bubbleOnly,
+    drawBox: unit.drawBox,
+    ocrBox: unit.ocrBox,
+    ocrText: '',
+    translation: '',
+    status: 'skipped',
+  }
+}
+
+/** True when a stored or kept result is incomplete because bubbles-only skipped some units. */
+function hasSkippedUnits(result: { units: ReadonlyArray<{ status: string }> }): boolean {
+  return result.units.some((unit) => unit.status === 'skipped')
+}
+
+/** The presented view of a result under bubbles-only: free units are neither OCR'd nor drawn. */
+function withoutFreeUnits(result: ImageResult): ImageResult {
+  return { ...result, units: result.units.filter((unit) => unit.kind !== 'free') }
 }
 
 function toFailure(error: unknown): ImageFailure {

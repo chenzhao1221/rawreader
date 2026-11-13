@@ -3,6 +3,7 @@ import type { CaptureRequest, CaptureResult } from '../capture/capture'
 import { sha256Hex } from '../capture/hash'
 import type { DetectJob, DetectOutcome, DetectService } from '../detect/service'
 import { silentLogger } from '../log/log'
+import type { Logger } from '../log/log'
 import type { TranslateRequest, TranslateResult } from '../translate/client'
 import { Pipeline } from './scheduler'
 import type { PipelineCache, PipelineDeps, PipelineSettings } from './scheduler'
@@ -18,6 +19,14 @@ function deferred<T = void>() {
 }
 
 const box = (x1: number, y1: number, x2: number, y2: number) => ({ x1, y1, x2, y2, confidence: 0.9 })
+
+/** Bubble units followed by reeCount free-text units (indices continue, so OCR text stays distinguishable). */
+function detectMixed(bubbleCount: number, freeCount: number): DetectOutcome {
+  const base = detectOk(bubbleCount + freeCount)
+  if (!base.ok) return base
+  base.result.units = base.result.units.map((unit, i) => ({ ...unit, kind: i < bubbleCount ? ('bubble' as const) : ('free' as const) }))
+  return base
+}
 
 function detectOk(unitCount = 2): DetectOutcome {
   return {
@@ -59,6 +68,7 @@ function setup(overrides: {
   serversUnavailable?: () => { code: string; message: string } | null
   settings?: Partial<PipelineSettings>
   cache?: PipelineCache
+  logger?: Logger
 } = {}): Harness {
   const bytesByUrl = overrides.bytesByUrl ?? {}
   const settings: PipelineSettings = {
@@ -69,6 +79,7 @@ function setup(overrides: {
     maxBoxImageCoverage: 0.85,
     ocrPadding: 8,
     maxUnitsPerImage: 50,
+    bubblesOnly: false,
     ...overrides.settings,
   }
   const capture = vi.fn((request: CaptureRequest): Promise<CaptureResult> => {
@@ -97,7 +108,7 @@ function setup(overrides: {
     onFailure: (subscriber, failure) => failures.push({ subscriber, failure }),
     onProgress: (p) => progress.push(p),
     ...(overrides.cache ? { cache: overrides.cache } : {}),
-    logger: silentLogger,
+    logger: overrides.logger ?? silentLogger,
   }
   const pipeline = new Pipeline(deps)
   return { pipeline, results, failures, detect, ocr, translate, capture, settings, progress }
@@ -544,5 +555,174 @@ describe('Pipeline with the persistent cache', () => {
     h.pipeline.submit(batch([image('rr2', 'https://cdn.example/1.png')]))
     await h.pipeline.whenIdle()
     expect(h.detect).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('Pipeline bubbles-only setting', () => {
+  const URL1 = 'https://cdn.example/1.png'
+  const NEXT_DOC = 'doc-bbbbbbbb'
+
+  /** Four units: two bubbles (OCR text-0, text-1) and two free units (text-2, text-3). */
+  const mixed = (): Promise<DetectOutcome> => Promise.resolve(detectMixed(2, 2))
+
+  function memoryCache(): PipelineCache & { rows: Map<string, Pick<ImageResult, 'width' | 'height' | 'units'>> } {
+    const rows = new Map<string, Pick<ImageResult, 'width' | 'height' | 'units'>>()
+    return {
+      rows,
+      lookup: (hash) => rows.get(hash) ?? null,
+      store: (hash, result) => void rows.set(hash, { width: result.width, height: result.height, units: result.units }),
+    }
+  }
+
+  async function run(h: Harness, elId: string, docId = DOC): Promise<void> {
+    h.pipeline.submit(batch([image(elId, URL1)], docId))
+    await h.pipeline.whenIdle()
+  }
+
+  it('when off, free units are OCR-ed, translated and delivered', async () => {
+    const h = setup({ detect: mixed })
+    h.pipeline.setEnabled(true)
+    h.pipeline.beginDocument(DOC)
+    await run(h, 'rr1')
+    expect(h.ocr).toHaveBeenCalledTimes(4)
+    expect(h.translate).toHaveBeenCalledTimes(4)
+    expect(h.results[0]!.result.units.map((u) => u.kind)).toEqual(['bubble', 'bubble', 'free', 'free'])
+  })
+
+  it('when on, free units never reach OCR or translation and are not delivered', async () => {
+    const h = setup({ detect: mixed, settings: { bubblesOnly: true } })
+    h.pipeline.setEnabled(true)
+    h.pipeline.beginDocument(DOC)
+    await run(h, 'rr1')
+
+    expect(h.ocr).toHaveBeenCalledTimes(2)
+    expect(h.translate).toHaveBeenCalledTimes(2)
+    const requests = h.translate.mock.calls.map((c) => c[0] as TranslateRequest)
+    expect(requests[0]!.sources).toEqual(['text-0', 'text-1']) // free text is not even context
+    expect(h.results[0]!.result.units.map((u) => [u.kind, u.translation])).toEqual([
+      ['bubble', 'zh(text-0)'],
+      ['bubble', 'zh(text-1)'],
+    ])
+    expect(h.pipeline.getProgress()).toMatchObject({ done: 1, failed: 0 })
+  })
+
+  it('when on and only free units were found, no server is needed and nothing is drawn', async () => {
+    const h = setup({
+      detect: () => Promise.resolve(detectMixed(0, 2)),
+      settings: { bubblesOnly: true },
+      serversUnavailable: () => ({ code: 'SERVER_NOT_READY', message: 'down' }),
+    })
+    h.pipeline.setEnabled(true)
+    h.pipeline.beginDocument(DOC)
+    await run(h, 'rr1')
+    expect(h.failures).toEqual([])
+    expect(h.ocr).not.toHaveBeenCalled()
+    expect(h.translate).not.toHaveBeenCalled()
+    expect(h.results[0]!.result.units).toEqual([])
+  })
+
+  it('filters free units out of a cached result at delivery, and shows them again when the setting is off', async () => {
+    const cache = memoryCache()
+    const first = setup({ detect: mixed, cache })
+    first.pipeline.setEnabled(true)
+    first.pipeline.beginDocument(DOC)
+    await run(first, 'rr1')
+    expect(cache.rows.get(sha256Hex(new TextEncoder().encode(URL1)))?.units).toHaveLength(4)
+
+    // New pipeline (restart) with bubbles-only on: the stored row is served filtered, no stage runs.
+    const on = setup({ detect: mixed, cache, settings: { bubblesOnly: true } })
+    on.pipeline.setEnabled(true)
+    on.pipeline.beginDocument(DOC)
+    await run(on, 'rr1')
+    expect(on.detect).not.toHaveBeenCalled()
+    expect(on.ocr).not.toHaveBeenCalled()
+    expect(on.translate).not.toHaveBeenCalled()
+    expect(on.results[0]!.result.units.map((u) => u.kind)).toEqual(['bubble', 'bubble'])
+    expect(cache.rows.get(sha256Hex(new TextEncoder().encode(URL1)))?.units).toHaveLength(4) // row untouched
+
+    // Turn it off again: same row, still no re-run, free units are back.
+    on.settings.bubblesOnly = false
+    on.pipeline.beginDocument(NEXT_DOC)
+    await run(on, 'rr1', NEXT_DOC)
+    expect(on.detect).not.toHaveBeenCalled()
+    expect(on.results[1]!.result.units.map((u) => u.kind)).toEqual(['bubble', 'bubble', 'free', 'free'])
+  })
+
+  it('filters a result kept in memory when the setting is switched on, without re-running', async () => {
+    const h = setup({ detect: mixed })
+    h.pipeline.setEnabled(true)
+    h.pipeline.beginDocument(DOC)
+    await run(h, 'rr1')
+    h.settings.bubblesOnly = true
+    h.pipeline.beginDocument(NEXT_DOC)
+    await run(h, 'rr1', NEXT_DOC)
+    expect(h.detect).toHaveBeenCalledTimes(1)
+    expect(h.results[1]!.result.units.map((u) => u.kind)).toEqual(['bubble', 'bubble'])
+  })
+
+  it('a result produced with the setting on is stored with skipped free units and completed once it is off', async () => {
+    const cache = memoryCache()
+    const hash = sha256Hex(new TextEncoder().encode(URL1))
+    const on = setup({ detect: mixed, cache, settings: { bubblesOnly: true } })
+    on.pipeline.setEnabled(true)
+    on.pipeline.beginDocument(DOC)
+    await run(on, 'rr1')
+    const partialRow = cache.rows.get(hash)
+    expect(partialRow?.units.map((u) => u.status)).toEqual(['ok', 'ok', 'skipped', 'skipped'])
+
+    // Same pipeline, setting turned off, next document: the kept in-memory result is incomplete, so it runs fully.
+    on.settings.bubblesOnly = false
+    on.pipeline.beginDocument(NEXT_DOC)
+    await run(on, 'rr1', NEXT_DOC)
+    expect(on.detect).toHaveBeenCalledTimes(2)
+    expect(on.results[1]!.result.units.map((u) => [u.kind, u.status])).toEqual([
+      ['bubble', 'ok'],
+      ['bubble', 'ok'],
+      ['free', 'ok'],
+      ['free', 'ok'],
+    ])
+    expect(cache.rows.get(hash)?.units.map((u) => u.status)).toEqual(['ok', 'ok', 'ok', 'ok'])
+
+    // A fresh pipeline with the partial SQLite row and the setting off also treats it as a miss.
+    cache.rows.set(hash, partialRow!)
+    const off = setup({ detect: mixed, cache })
+    off.pipeline.setEnabled(true)
+    off.pipeline.beginDocument(DOC)
+    await run(off, 'rr1')
+    expect(off.detect).toHaveBeenCalledTimes(1)
+    expect(off.results[0]!.result.units.map((u) => u.status)).toEqual(['ok', 'ok', 'ok', 'ok'])
+  })
+})
+
+describe('Pipeline in-memory cache hits', () => {
+  it('serves the same bytes in a new document without any stage and logs a cache hit', async () => {
+    const lines: string[] = []
+    const logger: Logger = { ...silentLogger, info: (message) => void lines.push(message) }
+    const same = new TextEncoder().encode('reloaded page image')
+    const h = setup({ logger, bytesByUrl: { 'https://cdn.example/1.png': same } })
+    h.pipeline.setEnabled(true)
+    h.pipeline.beginDocument(DOC)
+    h.pipeline.submit(batch([image('rr1', 'https://cdn.example/1.png')]))
+    await h.pipeline.whenIdle()
+    expect(lines.filter((l) => l.includes('(cache hit)'))).toEqual([])
+
+    // Reload: a new document id, the same image bytes.
+    const RELOAD_DOC = 'doc-cccccccc'
+    h.pipeline.beginDocument(RELOAD_DOC, 'https://site.example/ch1')
+    h.pipeline.submit(batch([image('rr1', 'https://cdn.example/1.png')], RELOAD_DOC))
+    await h.pipeline.whenIdle()
+
+    expect(h.capture).toHaveBeenCalledTimes(2) // bytes are still captured; the hash comes from them
+    expect(h.detect).toHaveBeenCalledTimes(1)
+    expect(h.ocr).toHaveBeenCalledTimes(2)
+    expect(h.translate).toHaveBeenCalledTimes(2)
+    expect(h.results).toHaveLength(2)
+    expect(h.results[1]!.subscriber).toEqual({ docId: RELOAD_DOC, elId: 'rr1' })
+    expect(h.results[1]!.result.units).toEqual(h.results[0]!.result.units)
+    const hits = lines.filter((l) => l.includes('(cache hit)'))
+    expect(hits).toHaveLength(1)
+    expect(hits[0]).toContain('detect=0ms ocr=0ms translate=0ms')
+    expect(hits[0]).toContain('cache=memory')
+    expect(h.pipeline.getProgress()).toEqual({ total: 1, done: 1, failed: 0, active: 0 })
   })
 })

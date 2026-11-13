@@ -18,6 +18,7 @@ export function pipelineSettingsFrom(config: Config): PipelineSettings {
     maxBoxImageCoverage: config.pipeline.maxBoxImageCoverage,
     ocrPadding: OCR_PADDING_PX,
     maxUnitsPerImage: MAX_UNITS_PER_IMAGE,
+    bubblesOnly: config.ui.bubblesOnly,
   }
 }
 

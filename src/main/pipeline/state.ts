@@ -110,6 +110,11 @@ export class ImageRegistry {
     }
   }
 
+  /** Forgets one finished result so the next claim starts a fresh run (it was produced under other settings). */
+  discardResult(hash: string): void {
+    if (this.entries.get(hash)?.status === 'done') this.entries.delete(hash)
+  }
+
   /** Forget everything, including results (cache cleared). */
   clear(): void {
     this.entries.clear()

@@ -76,6 +76,8 @@ export const ConfigSchema = z.object({
     .object({
       autoTranslate: f.bool.default(false),
       overlayVisible: f.bool.default(true),
+      /** Skip free-text units: no OCR, no translation, no overlay for them. Detection and the cache still keep them. */
+      bubblesOnly: f.bool.default(false),
       lastUrl: z.string().nullable().default(null),
     })
     .prefault({}),
@@ -159,7 +161,7 @@ const serverPatchShape = {
 
 export const ConfigPatchSchema = z
   .strictObject({
-    ui: z.strictObject({ autoTranslate: f.bool, overlayVisible: f.bool }).partial(),
+    ui: z.strictObject({ autoTranslate: f.bool, overlayVisible: f.bool, bubblesOnly: f.bool }).partial(),
     llama: z
       .strictObject({
         backend: f.backend,

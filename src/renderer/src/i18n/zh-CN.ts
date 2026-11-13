@@ -110,6 +110,8 @@ export const zhCN = {
     readingDirection: '阅读方向',
     ltr: '从左到右',
     rtl: '从右到左（日漫）',
+    bubblesOnly: '仅翻译气泡内的文字',
+    bubblesOnlyNote: '开启后，气泡外的文字（拟声词、旁白等）不再识别、翻译或覆盖。关闭后可恢复显示。',
     mirrors: '下载镜像',
     huggingface: 'Hugging Face 镜像地址',
     modelscope: '魔搭社区（ModelScope）地址',

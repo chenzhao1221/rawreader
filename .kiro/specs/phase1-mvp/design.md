@@ -79,6 +79,7 @@ export const ConfigSchema = z.object({
   ui: z.object({
     autoTranslate: z.boolean().default(false),
     overlayVisible: z.boolean().default(true),
+    bubblesOnly: z.boolean().default(false), // skip free-text units: no OCR, no translation, no overlay
     lastUrl: z.string().nullable().default(null),
   }).default({}),
   llama: z.object({
@@ -266,6 +267,8 @@ For each `run/llama-*.pid.json`: parse with zod (invalid → delete file). `info
 - `main/pipeline/scheduler.ts`: one p-queue per stage (`detect`, `ocr`, `translate`); priority = `-distance`. Per image: capture → `sha256` → in-flight map by hash (joins duplicates, R5.4) → cache lookup → detect → OCR units → translate units → cache write → `overlay:result` to every element waiting on that hash.
 - `main/pipeline/state.ts` (ported from LMT `translation-registry.ts`): state per hash `pending | done | error`, plus element subscriptions per `docId`.
 - Turning auto-translate off clears queued tasks (`queue.clear()`), running tasks finish and their results are cached but not rendered.
+- Bubbles-only (`ui.bubblesOnly`, default off; Advanced tab of the settings panel): detection is unchanged, so free units are still detected (R6.5). `process()` leaves them out of OCR and translation (they are not translation context either) and records them as `status: 'skipped'` with empty text; a page with only free units needs no running server. The setting is applied again when a result is delivered (`settle`): free units are removed from whatever result is delivered, whether fresh, kept in memory or read from SQLite, so the cache key does not include the flag and old rows stay valid. A result that holds `skipped` units is incomplete: when the setting is off, a kept in-memory result is discarded (`ImageRegistry.discardResult`) and a SQLite row is treated as a miss, then the image runs fully and overwrites the row. Switching the setting does not redraw overlays already on screen; it applies from the next scan or reload.
+- Memory hits: `dropDocument` keeps finished results, so a reload or back navigation still captures each image (the hash comes from the bytes) and then finds the result in the registry. That path logs the same `done (cache hit)` line as a SQLite hit, with `cache=memory` (SQLite hits log `cache=sqlite`) and detect/OCR/translate at 0 ms.
 
 ## 9. Detection, OCR, translation (R6–R8, later slice)
 
