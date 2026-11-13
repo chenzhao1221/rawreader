@@ -1,16 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import type { ModelItem } from '../../../shared/ipc/contract'
-  import { localRolesFor, planEngine } from '../../../shared/setup/plan'
-  import { TRANSLATOR_OPTIONS, isDownloadable, translatorOption } from '../../../shared/models/translators'
-  import type { TranslatorId } from '../../../shared/models/translators'
+  import { localRolesFor, largestVram, planEngine } from '../../../shared/setup/plan'
   import type { SetupEngine, SetupVerdict } from '../../../shared/setup/plan'
+  import { TRANSLATOR_OPTIONS, isDownloadable } from '../../../shared/models/translators'
+  import type { TranslatorId } from '../../../shared/models/translators'
   import { formatBytes, modelLabel, zhCN as t } from '../i18n/zh-CN'
   import { closeSettings, modelsDownload, saveConfig, store } from '../state.svelte'
+  import Choice from '../ui/Choice.svelte'
+  import Group from '../ui/Group.svelte'
+  import Row from '../ui/Row.svelte'
 
   let step = $state<1 | 2 | 3>(1)
   let engine = $state<SetupEngine>('local')
-  let forced = $state<SetupEngine | null>(null)
   let baseUrl = $state('https://api.deepseek.com/v1')
   let apiModel = $state('deepseek-chat')
   let geminiModel = $state('gemini-2.5-flash')
@@ -43,7 +45,16 @@
   })
 
   const engineNames: Record<SetupEngine, string> = { local: t.engine.local, openai: t.engine.openai, gemini: t.engine.gemini }
-  const engineNotes: Record<SetupEngine, string> = { local: t.engine.localNote, openai: t.engine.openaiNote, gemini: t.engine.geminiNote }
+  const chipTone: Record<SetupVerdict, string> = { recommended: 'good', workable: 'warn', blocked: 'bad' }
+
+  /** The four rows at the top of step 1: GPU, its memory, RAM and free disk. */
+  const gpuText = $derived(
+    !hardware ? t.setup.checking : hardware.gpus.length === 0 ? t.setup.noGpu : hardware.gpus.map((gpu) => gpu.name).join('、'),
+  )
+  const vramBytes = $derived(hardware ? largestVram(hardware) : 0)
+  const vramText = $derived(vramBytes > 0 ? formatBytes(vramBytes) : '—')
+  const ramText = $derived(hardware ? formatBytes(hardware.totalRamBytes) : '—')
+  const diskText = $derived(hardware?.freeDiskBytes != null ? formatBytes(hardware.freeDiskBytes) : '—')
 
   function diskNeedFor(target: SetupEngine): number {
     if (!models) return 0
@@ -55,13 +66,10 @@
     return hardware ? planEngine(target, hardware, diskNeedFor(target)) : null
   }
 
-  function verdictFor(target: SetupEngine): SetupVerdict | null {
-    return planFor(target)?.verdict ?? null
-  }
-
-  function reasonsFor(target: SetupEngine): string[] {
-    const plan = planFor(target)
-    return plan ? plan.reasons.map((code) => t.setup.reason(code, plan.shortfallBytes)) : []
+  /** Blocked engines stay selectable: the card is dimmed, not disabled. */
+  function choose(target: SetupEngine): void {
+    engine = target
+    error = null
   }
 
   /** Files this engine runs locally, with the ones still missing. */
@@ -81,8 +89,14 @@
     return models.items.filter((item) => roles.has(item.role))
   })
   const missingItems = $derived(neededItems.filter((item) => item.path === null))
-  const missingBytes = $derived(missingItems.reduce((sum, item) => sum + item.size, 0))
-  const downloading = $derived(neededItems.some((item) => item.download !== null && ['queued', 'downloading', 'verifying'].includes(item.download.status)))
+  const downloading = $derived(
+    neededItems.some((item) => item.download !== null && ['queued', 'downloading', 'verifying'].includes(item.download.status)),
+  )
+
+  const isActive = (item: ModelItem): boolean =>
+    item.download !== null && ['queued', 'downloading', 'verifying'].includes(item.download.status)
+  const isStopped = (item: ModelItem): boolean =>
+    item.download !== null && ['paused', 'cancelled', 'error'].includes(item.download.status)
 
   function percent(item: ModelItem): number {
     const download = item.download
@@ -90,15 +104,11 @@
     return Math.min(100, Math.round((download.receivedBytes / download.totalBytes) * 100))
   }
 
-  function choose(target: SetupEngine): void {
-    if (verdictFor(target) === 'blocked' && forced !== target) return
-    engine = target
-    error = null
-  }
-
-  function force(target: SetupEngine): void {
-    forced = target
-    engine = target
+  function dot(item: ModelItem): string {
+    if (isActive(item)) return 'busy'
+    if (item.path !== null) return 'good'
+    if (isStopped(item)) return 'warn'
+    return ''
   }
 
   async function saveKey(name: 'openai' | 'gemini', value: string): Promise<boolean> {
@@ -177,230 +187,234 @@
 
 <section class="wizard" aria-label={t.setup.title}>
   <header>
-    <div>
-      <h1>{t.setup.title}</h1>
-      <span class="muted step">{t.setup.step(step)} · {t.setup.stepTitles[step]}</span>
+    <div class="steps" role="group" aria-label={t.setup.step(step)}>
+      {#each [1, 2, 3] as n (n)}
+        <span class="step-dot" class:current={n === step} class:done={n < step} aria-hidden="true"></span>
+      {/each}
     </div>
+    <h1>{t.setup.title}</h1>
     <span class="spacer"></span>
     {#if step < 3}
-      <button type="button" class="btn" onclick={skip}>{t.setup.skip}</button>
+      <button type="button" class="ui-btn small ghost" onclick={skip}>{t.setup.skip}</button>
     {/if}
   </header>
 
   <div class="body">
     {#if step === 1}
-      <div class="hardware">
-        <strong>{t.setup.hardware}</strong>
-        {#if hardware}
-          <div class="specs">
-            <span>{t.setup.cpu(hardware.cpuThreads)}</span>
-            <span>{t.setup.ram(hardware.totalRamBytes)}</span>
-            {#if hardware.freeDiskBytes !== null}<span>{t.setup.disk(hardware.freeDiskBytes)}</span>{/if}
-          </div>
-          <div class="specs">
-            {#if hardware.gpus.length === 0}
-              <span class="warn">{t.setup.noGpu}</span>
-            {:else}
-              {#each hardware.gpus as gpu (gpu.name)}
-                <span>{t.setup.gpu(gpu.name, gpu.vramBytes)}</span>
-              {/each}
-            {/if}
-          </div>
-        {:else}
-          <div class="specs muted">{t.setup.checking}</div>
-        {/if}
-      </div>
+      <Group title={t.setup.hardware}>
+        <Row label={t.setup.specGpu}><span class="value" title={gpuText}>{gpuText}</span></Row>
+        <Row label={t.setup.specVram}><span class="value">{vramText}</span></Row>
+        <Row label={t.setup.specRam}><span class="value">{ramText}</span></Row>
+        <Row label={t.setup.specDisk}><span class="value">{diskText}</span></Row>
+      </Group>
 
       <div class="choices">
         {#each engines as option (option)}
-          {@const verdict = verdictFor(option)}
-          {@const blocked = verdict === 'blocked' && forced !== option}
-          <div
-            class="choice"
-            class:active={engine === option}
-            class:blocked
-            role="radio"
-            aria-checked={engine === option}
-            tabindex={blocked ? -1 : 0}
-            onclick={() => choose(option)}
-            onkeydown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                choose(option)
-              }
-            }}
-          >
-            <div class="choice-head">
-              <strong>{engineNames[option]}</strong>
-              {#if verdict}
-                <span class="badge {verdict}">{t.setup.verdict[verdict]}</span>
-              {/if}
-              {#if forced === option}<span class="badge forced">{t.setup.forced}</span>{/if}
-            </div>
-            <span class="muted note">{engineNotes[option]}</span>
-            {#if reasonsFor(option).length > 0}
-              <ul class="reasons">
-                {#each reasonsFor(option) as reason (reason)}
-                  <li>{reason}</li>
-                {/each}
-              </ul>
+          {@const plan = planFor(option)}
+          {@const verdict = plan?.verdict ?? null}
+          <Choice title={engineNames[option]} selected={engine === option} disabled={verdict === 'blocked'} onselect={() => choose(option)}>
+            {#if verdict}
+              <span class="ui-chip {chipTone[verdict]}">{t.setup.verdict[verdict]}</span>
             {/if}
-            {#if blocked}
-              <button
-                type="button"
-                class="btn small"
-                onclick={(event) => {
-                  event.stopPropagation()
-                  force(option)
-                }}>{t.setup.force}</button
-              >
+            {#if verdict === 'blocked' && engine === option}
+              <span class="ui-chip">{t.setup.forced}</span>
             {/if}
-          </div>
+            {#if option === 'openai'}
+              <span class="ui-chip warn">{t.engine.tagPaid}</span>
+            {/if}
+            {#if plan && plan.shortfallBytes !== null}
+              <span class="ui-chip bad">{t.setup.diskShort(plan.shortfallBytes)}</span>
+            {/if}
+          </Choice>
         {/each}
       </div>
-      {#if hardware && hardware.gpus.length === 0}
-        <p class="muted small">{t.setup.hardwareFailed}</p>
-      {/if}
     {:else if step === 2}
       {#if engine === 'openai'}
-        <h2>{t.engine.apiTitle}</h2>
-        <div class="row">
-          {#each presets as preset (preset.label)}
-            <button
-              type="button"
-              class="btn"
-              onclick={() => {
-                baseUrl = preset.baseUrl
-                apiModel = preset.model
-              }}>{preset.label}</button
-            >
-          {/each}
-        </div>
-        <div class="row">
-          <label class="field long"><span>{t.engine.baseUrl}</span><input type="text" bind:value={baseUrl} spellcheck="false" /></label>
-          <label class="field"><span>{t.engine.model}</span><input type="text" bind:value={apiModel} spellcheck="false" /></label>
-        </div>
-        <div class="row">
-          <label class="field long">
-            <span>{t.engine.apiKey}{keySet.openai ? `（${t.engine.keySet}）` : ''}</span>
-            <input type="password" bind:value={apiKey} placeholder={keySet.openai ? t.engine.keepKey : 'sk-…'} autocomplete="off" />
-          </label>
-          {#if keySet.openai}<button type="button" class="btn" onclick={() => removeKey('openai')}>{t.setup.removeKey}</button>{/if}
-        </div>
-      {:else if engine === 'gemini'}
-        <h2>{t.engine.geminiTitle}</h2>
-        <div class="row">
-          <label class="field"><span>{t.engine.model}</span><input type="text" bind:value={geminiModel} spellcheck="false" /></label>
-          <label class="field long">
-            <span>{t.engine.apiKey}{keySet.gemini ? `（${t.engine.keySet}）` : ''}</span>
-            <input type="password" bind:value={geminiKey} placeholder={keySet.gemini ? t.engine.keepKey : 'AIza…'} autocomplete="off" />
-          </label>
-          {#if keySet.gemini}<button type="button" class="btn" onclick={() => removeKey('gemini')}>{t.setup.removeKey}</button>{/if}
-        </div>
-        <p class="muted small">{t.engine.geminiKeyNote}</p>
-      {/if}
-
-      {#if engine === 'local'}
-        <h2>{t.models.translatorTitle}</h2>
-        <div class="row">
-          <select value={translator} onchange={(e) => pickTranslator(e.currentTarget.value as TranslatorId)}>
-            {#each TRANSLATOR_OPTIONS.filter(isDownloadable) as option (option.id)}
-              <option value={option.id}>
-                {option.displayName} · {formatBytes(option.size)} · {t.models.vram(formatBytes(option.vramBytes))}
-              </option>
+        <Group title={t.engine.apiTitle}>
+          {#snippet actions()}
+            {#each presets as preset (preset.label)}
+              <button
+                type="button"
+                class="ui-btn small ghost"
+                onclick={() => {
+                  baseUrl = preset.baseUrl
+                  apiModel = preset.model
+                }}>{preset.label}</button
+              >
             {/each}
-          </select>
-        </div>
-        <p class="muted small">{translatorOption(translator).note}</p>
-      {/if}
-
-      {#if engine !== 'gemini'}
-        {#if missingItems.length === 0}
-          <p class="good small">{t.setup.modelsReady}</p>
-        {:else}
-          <p class="muted small">{t.setup.downloadNote(missingBytes)}</p>
-          <ul class="files">
-            {#each neededItems as item (item.role)}
-              <li>
-                <span>{roleName[item.role] ?? item.displayName}</span>
-                <span class="muted">{formatBytes(item.size)}</span>
-                {#if item.path !== null}
-                  <span class="good small">{t.setup.modelsReady}</span>
-                {:else if item.download && item.download.status !== 'queued'}
-                  <span class="small">{modelLabel.downloadStatus(item.download.status)} {percent(item)}%</span>
-                {:else}
-                  <span class="muted small">{t.models.missing}</span>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-          {#if models?.downloadsAllowed && !downloading}
-            <button type="button" class="btn" onclick={() => missingItems.forEach((item) => void modelsDownload('start', item.role))}>{t.setup.downloadAll}</button>
-          {/if}
-        {/if}
-      {:else}
-        <p class="muted small">{t.setup.noModelsNeeded}</p>
-      {/if}
-
-      <p class="muted small">{t.setup.keyNote}</p>
-    {:else}
-      <h2>{t.setup.doneTitle}</h2>
-      <p>{t.setup.doneBody}</p>
-      <ul class="summary">
-        <li>{engineNames[engine]}</li>
-        {#if engine === 'local' || engine === 'openai'}
-          <li>
-            {#if missingItems.length === 0}
-              <span class="good">{t.setup.modelsReady}</span>
-            {:else}
-              <span class="muted">{t.setup.downloadNote(missingBytes)}</span>
+          {/snippet}
+          <Row label={t.engine.baseUrl}>
+            <input class="ui-input mono field" bind:value={baseUrl} spellcheck="false" />
+          </Row>
+          <Row label={t.engine.model}>
+            <input class="ui-input mono field" bind:value={apiModel} spellcheck="false" />
+          </Row>
+          <Row label={t.engine.apiKey} detail={missingKey() ? t.setup.needKey : undefined} tone="warn">
+            {#if keySet.openai}<span class="ui-chip good">{t.engine.keySet}</span>{/if}
+            <input
+              class="ui-input mono field"
+              type="password"
+              bind:value={apiKey}
+              placeholder={keySet.openai ? t.engine.keepKey : 'sk-…'}
+              autocomplete="off"
+            />
+            {#if keySet.openai}
+              <button type="button" class="ui-btn small ghost" onclick={() => removeKey('openai')}>{t.setup.removeKey}</button>
             {/if}
-          </li>
-        {/if}
-      </ul>
+          </Row>
+        </Group>
+      {:else if engine === 'gemini'}
+        <Group title={t.engine.geminiTitle}>
+          <Row label={t.engine.model}>
+            <input class="ui-input mono field" bind:value={geminiModel} spellcheck="false" />
+          </Row>
+          <Row label={t.engine.apiKey} detail={missingKey() ? t.setup.needKey : undefined} tone="warn">
+            {#if keySet.gemini}<span class="ui-chip good">{t.engine.keySet}</span>{/if}
+            <input
+              class="ui-input mono field"
+              type="password"
+              bind:value={geminiKey}
+              placeholder={keySet.gemini ? t.engine.keepKey : 'AIza…'}
+              autocomplete="off"
+            />
+            {#if keySet.gemini}
+              <button type="button" class="ui-btn small ghost" onclick={() => removeKey('gemini')}>{t.setup.removeKey}</button>
+            {/if}
+          </Row>
+        </Group>
+      {:else}
+        <Group title={t.models.translatorTitle}>
+          <Row label={t.models.translatorTitle}>
+            <select class="ui-select select" value={translator} onchange={(e) => pickTranslator(e.currentTarget.value as TranslatorId)}>
+              {#each TRANSLATOR_OPTIONS.filter(isDownloadable) as option (option.id)}
+                <option value={option.id}>
+                  {option.displayName} · {formatBytes(option.size)} · {t.models.vram(formatBytes(option.vramBytes))}
+                </option>
+              {/each}
+            </select>
+          </Row>
+        </Group>
+      {/if}
+
+      {#if engine !== 'gemini' && neededItems.length > 0}
+        <Group title={t.setup.downloadTitle}>
+          {#snippet actions()}
+            {#if models?.downloadsAllowed && !downloading && missingItems.length > 0}
+              <button
+                type="button"
+                class="ui-btn small primary"
+                onclick={() => missingItems.forEach((item) => void modelsDownload('start', item.role))}>{t.setup.downloadAll}</button
+              >
+            {/if}
+          {/snippet}
+          {#each neededItems as item (item.role)}
+            <div class="file">
+              <span class="ui-dot {dot(item)}"></span>
+              <div class="file-text">
+                <div class="file-name">
+                  {roleName[item.role] ?? item.displayName}
+                  <span class="size">{formatBytes(item.size)}</span>
+                </div>
+                {#if isActive(item)}
+                  <div class="ui-bar"><div style="width: {percent(item)}%"></div></div>
+                {/if}
+              </div>
+              <span class="file-state">
+                {#if item.path !== null}
+                  <span class="ui-chip good">{modelLabel.check('ok')}</span>
+                {:else if item.download && item.download.status !== 'queued'}
+                  <span class="ui-chip" class:bad={item.download.status === 'error'}>
+                    {modelLabel.downloadStatus(item.download.status)} {percent(item)}%
+                  </span>
+                {:else}
+                  <span class="ui-chip bad">{t.models.missing}</span>
+                {/if}
+              </span>
+            </div>
+          {/each}
+        </Group>
+      {/if}
+    {:else}
+      <div class="done">
+        <h2>{t.setup.doneTitle}</h2>
+        <div class="done-chips">
+          <span class="ui-chip good">{engineNames[engine]}</span>
+          {#if engine !== 'gemini'}
+            {#if missingItems.length === 0}
+              <span class="ui-chip good">{modelLabel.check('ok')}</span>
+            {:else}
+              <span class="ui-chip warn">{t.models.missing}</span>
+            {/if}
+          {/if}
+        </div>
+        <button type="button" class="ui-btn primary finish" onclick={finish}>{t.setup.finish}</button>
+      </div>
     {/if}
 
-    {#if error}<p class="bad" role="alert">{error}</p>{/if}
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
   </div>
 
-  <footer>
-    {#if step > 1 && step < 3}
-      <button type="button" class="btn" onclick={() => (step = 1)}>{t.setup.back}</button>
-    {/if}
-    <span class="spacer"></span>
-    {#if step < 3}
-      <button type="button" class="btn primary" disabled={saving} onclick={next}>{t.setup.next}</button>
-    {:else}
-      <button type="button" class="btn primary" onclick={finish}>{t.setup.finish}</button>
-    {/if}
-  </footer>
+  {#if step < 3}
+    <footer>
+      {#if step > 1}
+        <button type="button" class="ui-btn ghost" onclick={() => (step = 1)}>{t.setup.back}</button>
+      {/if}
+      <span class="spacer"></span>
+      <button type="button" class="ui-btn primary" disabled={saving} onclick={next}>{t.setup.next}</button>
+    </footer>
+  {/if}
 </section>
 
 <style>
+  /* One centred card, like the settings page: the window shows through around it. */
   .wizard {
     display: flex;
     flex-direction: column;
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    background: #1e1f22;
-    color: #dfe1e5;
+    width: min(640px, calc(100% - 2 * var(--gap-xl)));
+    max-height: calc(100% - 2 * var(--gap-xl));
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-l);
+    box-shadow: var(--shadow);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--text-m);
+    overflow: hidden;
   }
   header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 10px 18px;
-    background: #2b2d30;
-    border-bottom: 1px solid #393b40;
+    gap: var(--gap);
+    padding: var(--gap-l) var(--gap-l) var(--gap);
   }
   h1 {
     margin: 0;
-    font-size: 15px;
+    font-size: var(--text-l);
     font-weight: 600;
   }
-  .step {
-    font-size: 12px;
+  .steps {
+    display: flex;
+    align-items: center;
+    gap: var(--gap-xs);
+    flex: none;
+  }
+  .step-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--surface-3);
+    transition: background 0.15s;
+  }
+  .step-dot.done {
+    background: var(--good);
+  }
+  .step-dot.current {
+    background: var(--accent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .step-dot {
+      transition: none;
+    }
   }
   .spacer {
     flex: 1;
@@ -409,181 +423,84 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: 18px 24px 28px;
-    max-width: 860px;
-    width: 100%;
-    box-sizing: border-box;
+    padding: 0 var(--gap-l) var(--gap);
   }
   footer {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 18px;
-    background: #2b2d30;
-    border-top: 1px solid #393b40;
-  }
-  h2 {
-    margin: 20px 0 10px;
-    font-size: 14px;
-    font-weight: 600;
-  }
-  h2:first-child {
-    margin-top: 0;
-  }
-  .hardware {
-    padding: 12px 14px;
-    margin-bottom: 16px;
-    background: #26282b;
-    border: 1px solid #393b40;
-    border-radius: 8px;
-  }
-  .specs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 16px;
-    margin-top: 6px;
-    font-size: 12px;
+    gap: var(--gap-s);
+    padding: var(--gap) var(--gap-l);
+    border-top: 1px solid var(--border);
   }
   .choices {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    display: grid;
+    gap: var(--gap-s);
   }
-  .choice {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 12px 14px;
-    background: #26282b;
-    border: 1px solid #393b40;
-    border-radius: 8px;
-    cursor: pointer;
-  }
-  .choice.active {
-    border-color: #6b9eff;
-  }
-  .choice.blocked {
-    opacity: 0.65;
-    cursor: default;
-  }
-  .choice-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .note {
-    font-size: 12px;
-  }
-  .reasons {
-    margin: 2px 0 0;
-    padding-left: 18px;
-    color: #e8c46a;
-    font-size: 12px;
-  }
-  .badge {
-    padding: 1px 8px;
-    border-radius: 10px;
-    font-size: 11px;
-    background: #393b40;
-  }
-  .badge.recommended {
-    color: #8ce0a8;
-    background: #24402f;
-  }
-  .badge.workable {
-    color: #e8c46a;
-    background: #403a24;
-  }
-  .badge.blocked {
-    color: #ff9a94;
-    background: #402a29;
-  }
-  .badge.forced {
-    color: #a9acb2;
-  }
-  .row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    margin: 8px 0;
+  .value {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .field {
+    width: 300px;
+  }
+  .select {
+    width: 260px;
+  }
+  .file {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 150px;
-  }
-  .field > span {
-    color: #a9acb2;
-    font-size: 12px;
-  }
-  .long {
-    min-width: 360px;
-  }
-  input[type='text'],
-  input[type='password'] {
-    height: 28px;
+    align-items: center;
+    gap: var(--gap);
+    min-height: 56px;
+    padding: 10px 16px;
     box-sizing: border-box;
-    padding: 0 8px;
-    color: inherit;
-    background: #2b2d30;
-    border: 1px solid #4e5157;
-    border-radius: 6px;
-    font: inherit;
   }
-  .btn {
-    height: 28px;
-    padding: 0 12px;
-    color: inherit;
-    background: #393b40;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    font: inherit;
-    cursor: pointer;
-  }
-  .btn:hover:not(:disabled) {
-    background: #45484e;
-  }
-  .btn.primary {
-    background: #3d6fd8;
-  }
-  .btn.small {
-    align-self: flex-start;
-    height: 24px;
-    font-size: 12px;
-  }
-  .files {
+  .file-text {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin: 8px 0 12px;
-    padding: 0;
-    list-style: none;
-    font-size: 13px;
+    gap: var(--gap-xs);
+    flex: 1;
+    min-width: 0;
   }
-  .files li {
+  .file-name {
     display: flex;
-    gap: 12px;
     align-items: baseline;
+    gap: var(--gap-s);
   }
-  .summary {
-    margin: 10px 0 16px;
-    padding-left: 18px;
+  .size {
+    color: var(--text-faint);
+    font-size: var(--text-s);
   }
-  .muted {
-    color: #8a8d93;
+  .file-state {
+    flex: none;
   }
-  .small {
-    font-size: 12px;
+  .done {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--gap-l);
+    padding: var(--gap-xl) 0;
   }
-  .warn {
-    color: #e8c46a;
+  .done h2 {
+    margin: 0;
+    font-size: var(--text-xl);
+    font-weight: 600;
   }
-  .good {
-    color: #57c27a;
+  .done-chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--gap-s);
   }
-  .bad {
-    color: #ff8f88;
+  .finish {
+    width: 100%;
+    max-width: 320px;
+    height: 44px;
+    font-size: var(--text-l);
+  }
+  .error {
+    margin: var(--gap) 0 0;
+    color: var(--bad);
   }
 </style>

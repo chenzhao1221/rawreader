@@ -4,6 +4,7 @@
   import { label, zhCN as t } from './i18n/zh-CN'
   import SettingsPanel from './settings/SettingsPanel.svelte'
   import SetupWizard from './setup/SetupWizard.svelte'
+  import Toggle from './ui/Toggle.svelte'
   import { activateTab, closeSettings, closeTab, go, initStore, navigate, newTab, openLogs, openSettings, setToggle, store, webBarAction } from './state.svelte'
 
   let address = $state('')
@@ -12,6 +13,7 @@
   let input: HTMLInputElement | undefined
 
   const roles = ['ocr', 'translate'] as const
+  const shortRole: Record<(typeof roles)[number], string> = { ocr: t.status.ocrShort, translate: t.status.translateShort }
 
   // Follow the browse view's URL unless the user is typing.
   $effect(() => {
@@ -48,6 +50,24 @@
     event.preventDefault()
     addressError = await navigate(address)
     if (addressError === null) input?.blur()
+  }
+
+  /** Colour of the small dot next to each server name. */
+  function statusTone(role: (typeof roles)[number]): string {
+    const state = store.llama[role]?.state
+    if (state === 'ready') return 'good'
+    if (state === 'error') return 'bad'
+    if (state === 'starting' || state === 'stopping') return 'busy'
+    return ''
+  }
+
+  /** The full "文字识别：就绪" wording lives in the tooltip; the bar itself stays short. */
+  function statusTitle(role: (typeof roles)[number]): string {
+    const status = store.llama[role]
+    const name = label.serverRole(role)
+    if (!status) return `${name}：…`
+    const text = status.errorCode ? label.llamaError(status.errorCode) : label.serverState(status.state)
+    return status.message ? `${name}：${text} · ${status.message}` : `${name}：${text}`
   }
 
   const autoTranslate = $derived(store.config?.ui.autoTranslate ?? false)
@@ -89,17 +109,42 @@
   </div>
 
   <form class="toolbar" onsubmit={submit}>
-    <button type="button" disabled={!store.browse.canGoBack} onclick={() => go('back')} title={t.toolbar.back} aria-label={t.toolbar.back}>←</button>
-    <button type="button" disabled={!store.browse.canGoForward} onclick={() => go('forward')} title={t.toolbar.forward} aria-label={t.toolbar.forward}>→</button>
+    <button
+      type="button"
+      class="icon-btn"
+      disabled={!store.browse.canGoBack}
+      onclick={() => go('back')}
+      title={t.toolbar.back}
+      aria-label={t.toolbar.back}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
+    </button>
+    <button
+      type="button"
+      class="icon-btn"
+      disabled={!store.browse.canGoForward}
+      onclick={() => go('forward')}
+      title={t.toolbar.forward}
+      aria-label={t.toolbar.forward}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" /></svg>
+    </button>
     {#if store.browse.loading}
-      <button type="button" onclick={() => go('stop')} title={t.toolbar.stop} aria-label={t.toolbar.stop}>✕</button>
+      <button type="button" class="icon-btn" onclick={() => go('stop')} title={t.toolbar.stop} aria-label={t.toolbar.stop}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+      </button>
     {:else}
-      <button type="button" onclick={() => go('reload')} title={t.toolbar.reload} aria-label={t.toolbar.reload}>⟳</button>
+      <button type="button" class="icon-btn" onclick={() => go('reload')} title={t.toolbar.reload} aria-label={t.toolbar.reload}>
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M12.9 6.4A5 5 0 1 0 13 8" />
+          <path d="M12.9 2.9v3.5h-3.5" />
+        </svg>
+      </button>
     {/if}
 
     <input
       bind:this={input}
-      class="address"
+      class="ui-input address"
       class:invalid={addressError !== null}
       type="text"
       spellcheck="false"
@@ -115,31 +160,29 @@
       onblur={() => (focused = false)}
     />
 
+    <span class="switch">
+      <span class="switch-label">{t.toolbar.autoTranslate}</span>
+      <Toggle label={t.toolbar.autoTranslate} checked={autoTranslate} onchange={(next) => void setToggle('autoTranslate', next)} />
+    </span>
+    <span class="switch">
+      <span class="switch-label">{t.toolbar.overlayVisible}</span>
+      <Toggle label={t.toolbar.overlayVisible} checked={overlayVisible} onchange={(next) => void setToggle('overlayVisible', next)} />
+    </span>
     <button
       type="button"
-      class="toggle"
-      role="switch"
-      aria-checked={autoTranslate}
-      onclick={() => setToggle('autoTranslate', !autoTranslate)}
-    >
-      <span class="knob" class:on={autoTranslate}></span>{t.toolbar.autoTranslate}
-    </button>
-    <button
-      type="button"
-      class="toggle"
-      role="switch"
-      aria-checked={overlayVisible}
-      onclick={() => setToggle('overlayVisible', !overlayVisible)}
-    >
-      <span class="knob" class:on={overlayVisible}></span>{t.toolbar.overlayVisible}
-    </button>
-    <button
-      type="button"
-      class="settings"
+      class="icon-btn"
+      class:active={store.panelOpen}
       aria-pressed={store.panelOpen}
+      title={t.toolbar.settings}
+      aria-label={t.toolbar.settings}
       onclick={() => (store.panelOpen ? closeSettings() : openSettings())}
     >
-      {t.toolbar.settings}
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.2" />
+        <path
+          d="M12.4 8h1.2M3.6 8H2.4M8 3.6V2.4M8 12.4v1.2M11.11 4.89l.85-.85M4.89 11.11l-.85.85M4.89 4.89l-.85-.85M11.11 11.11l.85.85"
+        />
+      </svg>
     </button>
   </form>
 
@@ -151,23 +194,25 @@
       <span class="webbar-icon" aria-hidden="true">文A</span>
       {#if store.webBar.state === 'offer'}
         <span class="webbar-text">{t.webBar.offer(lang)}</span>
-        <button type="button" class="primary" onclick={() => webBarAction('translate')}>{t.webBar.translate}</button>
-        <button type="button" onclick={() => webBarAction('always')}>{t.webBar.always(lang)}</button>
-        <button type="button" onclick={() => webBarAction('never-lang')}>{t.webBar.neverLang(lang)}</button>
-        <button type="button" onclick={() => webBarAction('never-site')}>{t.webBar.neverSite}</button>
+        <button type="button" class="ui-btn small primary" onclick={() => webBarAction('translate')}>{t.webBar.translate}</button>
+        <button type="button" class="ui-btn small ghost" onclick={() => webBarAction('always')}>{t.webBar.always(lang)}</button>
+        <button type="button" class="ui-btn small ghost" onclick={() => webBarAction('never-lang')}>{t.webBar.neverLang(lang)}</button>
+        <button type="button" class="ui-btn small ghost" onclick={() => webBarAction('never-site')}>{t.webBar.neverSite}</button>
       {:else if store.webBar.state === 'translating'}
         <span class="webbar-text">{t.webBar.translating}</span>
-        <button type="button" onclick={() => webBarAction('restore')}>{t.webBar.showOriginal}</button>
+        <button type="button" class="ui-btn small ghost" onclick={() => webBarAction('restore')}>{t.webBar.showOriginal}</button>
       {:else if store.webBar.state === 'translated'}
         <span class="webbar-text">{t.webBar.translated}</span>
-        <button type="button" onclick={() => webBarAction('restore')}>{t.webBar.showOriginal}</button>
-        <button type="button" onclick={() => webBarAction('never-site')}>{t.webBar.neverSite}</button>
+        <button type="button" class="ui-btn small ghost" onclick={() => webBarAction('restore')}>{t.webBar.showOriginal}</button>
+        <button type="button" class="ui-btn small ghost" onclick={() => webBarAction('never-site')}>{t.webBar.neverSite}</button>
       {:else}
         <span class="webbar-text error">{t.webBar.error}</span>
-        <button type="button" onclick={() => webBarAction('translate')}>{t.webBar.retry}</button>
+        <button type="button" class="ui-btn small ghost" onclick={() => webBarAction('translate')}>{t.webBar.retry}</button>
       {/if}
       <span class="spacer"></span>
-      <button type="button" class="webbar-close" title={t.webBar.close} aria-label={t.webBar.close} onclick={() => webBarAction('dismiss')}>×</button>
+      <button type="button" class="ui-btn small ghost webbar-close" title={t.webBar.close} aria-label={t.webBar.close} onclick={() => webBarAction('dismiss')}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+      </button>
     </div>
   {/if}
   </div>
@@ -188,9 +233,9 @@
   <footer class="statusbar">
     <span class="servers">
       {#each roles as role (role)}
-        {@const status = store.llama[role]}
-        <span class="server" class:ok={status?.state === 'ready'} class:bad={status?.state === 'error'} title={status?.message ?? ''}>
-          {label.serverRole(role)}：{status ? (status.errorCode ? label.llamaError(status.errorCode) : label.serverState(status.state)) : '…'}
+        <span class="server" title={statusTitle(role)}>
+          <span class="ui-dot {statusTone(role)}"></span>
+          {shortRole[role]}
         </span>
       {/each}
     </span>
@@ -198,7 +243,7 @@
       <span class="note">{t.status.progress}：{store.progress.done}/{store.progress.total}{#if store.progress.failed > 0}（{t.status.failed} {store.progress.failed}）{/if}</span>
     {/if}
     <span class="spacer"></span>
-    <button type="button" class="link" onclick={openLogs}>{t.status.openLogs}</button>
+    <button type="button" class="ui-btn small ghost link" onclick={openLogs}>{t.status.openLogs}</button>
     {#if addressError}
       <span class="error" role="alert">{addressError}</span>
     {:else if store.message}
@@ -215,10 +260,10 @@
   :global(html, body) {
     height: 100%;
     margin: 0;
-    background: #1e1f22;
-    color: #dfe1e5;
-    font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
-    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--text-m);
     overflow: hidden;
   }
   :global(#app) {
@@ -230,42 +275,47 @@
     display: grid;
     grid-template-rows: 34px 48px auto 1fr 24px;
     height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--text-m);
+  }
+
+  svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   .webbar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--gap-s);
     height: 36px;
     box-sizing: border-box;
     padding: 0 10px;
-    background: #24324a;
-    color: #dfe1e5;
-    border-bottom: 1px solid #34486b;
+    background: var(--accent-soft);
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
     white-space: nowrap;
     overflow: hidden;
   }
-  .webbar button {
-    height: 26px;
-  }
-  .webbar .primary {
-    background: #3d6fd8;
-  }
-  .webbar .primary:hover {
-    background: #4a7de6;
-  }
   .webbar-icon {
     font-weight: 700;
-    color: #8fb4ff;
+    color: var(--accent);
   }
   .webbar-text.error {
-    color: #ff8f88;
+    color: var(--bad);
   }
-  .webbar-close {
+  .webbar .ui-btn.webbar-close {
     min-width: 26px;
     padding: 0;
-    background: transparent;
-    font-size: 16px;
   }
 
   .tabstrip {
@@ -278,7 +328,7 @@
     width: env(titlebar-area-width, calc(100vw - 140px));
     box-sizing: border-box;
     padding: 0 6px;
-    background: #1e1f22;
+    background: var(--bg);
     /* With many tabs the strip scrolls instead of pushing the new-tab button out of reach. */
     overflow-x: auto;
     overflow-y: hidden;
@@ -304,46 +354,62 @@
     height: 26px;
     box-sizing: border-box;
     padding: 0 4px 0 10px;
-    color: #a9acb2;
-    background: #26282b;
-    border-radius: 8px 8px 0 0;
+    color: var(--text-dim);
+    background: var(--surface-2);
+    border-radius: var(--radius) var(--radius) 0 0;
     cursor: default;
     user-select: none;
   }
   .tab:hover {
-    background: #303236;
+    background: var(--surface-3);
   }
   .tab.active {
-    color: #dfe1e5;
-    background: #2b2d30;
+    color: var(--text);
+    background: var(--surface);
   }
   .tab-title {
     flex: 1;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    font-size: 12px;
+    font-size: var(--text-s);
   }
   .tab-close {
     height: 20px;
     min-width: 20px;
     padding: 0;
+    color: inherit;
     background: transparent;
+    border: 0;
     border-radius: 50%;
+    font: inherit;
     font-size: 14px;
     line-height: 1;
+    cursor: pointer;
+  }
+  .tab-close:hover {
+    background: var(--surface-3);
   }
   .tab-new {
     height: 26px;
     min-width: 26px;
     margin: 0 0 1px 2px;
     padding: 0;
+    color: var(--text-dim);
     background: transparent;
+    border: 0;
+    border-radius: var(--radius);
+    font: inherit;
+    cursor: pointer;
+  }
+  .tab-new:hover {
+    color: var(--text);
+    background: var(--surface-3);
   }
   .spinner {
     width: 10px;
     height: 10px;
-    border: 2px solid #6b9eff;
+    border: 2px solid var(--accent);
     border-right-color: transparent;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
@@ -364,61 +430,53 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 8px;
-    background: #2b2d30;
-    border-bottom: 1px solid #393b40;
+    padding: 0 var(--gap-s);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
   }
-  button {
-    height: 30px;
-    min-width: 30px;
-    padding: 0 8px;
-    color: inherit;
-    background: #393b40;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    font: inherit;
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    padding: 0;
+    color: var(--text-dim);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius);
     cursor: pointer;
   }
-  button:hover:not(:disabled) {
-    background: #45484e;
+  .icon-btn:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--surface-3);
   }
-  button:disabled {
+  .icon-btn.active {
+    color: var(--text);
+    background: var(--surface-3);
+  }
+  .icon-btn:disabled {
     opacity: 0.4;
     cursor: default;
   }
-  .address {
+  .toolbar .address {
     flex: 1;
     min-width: 120px;
-    height: 30px;
-    box-sizing: border-box;
-    padding: 0 10px;
-    color: inherit;
-    background: #1e1f22;
-    border: 1px solid #4e5157;
-    border-radius: 15px;
-    font: inherit;
-    outline: none;
+    border-radius: var(--radius-l);
   }
-  .address:focus {
-    border-color: #6b9eff;
+  .toolbar .address.invalid {
+    border-color: var(--bad);
   }
-  .address.invalid {
-    border-color: #e5534b;
-  }
-  .toggle {
+  .switch {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--gap-s);
     white-space: nowrap;
   }
-  .knob {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #6c6f75;
-  }
-  .knob.on {
-    background: #57c27a;
+  .switch-label {
+    color: var(--text-dim);
+    font-size: var(--text-s);
   }
 
   .content {
@@ -428,10 +486,10 @@
     min-height: 0;
   }
   .hint {
-    color: #8a8d93;
+    color: var(--text-faint);
   }
   .error {
-    color: #ff8f88;
+    color: var(--bad);
   }
   .statusbar .error {
     font-weight: 600;
@@ -440,35 +498,32 @@
   .statusbar {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: var(--gap);
     padding: 0 10px;
-    background: #2b2d30;
-    border-top: 1px solid #393b40;
-    color: #a9acb2;
-    font-size: 12px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: var(--text-s);
     white-space: nowrap;
     overflow: hidden;
   }
   .servers {
     display: flex;
-    gap: 12px;
+    gap: var(--gap);
   }
-  .server.ok {
-    color: #57c27a;
-  }
-  .server.bad {
-    color: #ff8f88;
+  .server {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--gap-xs);
   }
   .spacer {
     flex: 1;
   }
-  .statusbar .link {
+  .statusbar .ui-btn.link {
     height: 20px;
     min-width: 0;
     padding: 0 6px;
-    color: #a9acb2;
-    background: transparent;
-    font-size: 12px;
+    font-size: var(--text-s);
     text-decoration: underline;
   }
   .title {
@@ -477,6 +532,6 @@
     max-width: 40vw;
   }
   .message {
-    color: #e8c46a;
+    color: var(--warn);
   }
 </style>
