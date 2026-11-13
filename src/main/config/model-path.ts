@@ -76,5 +76,8 @@ export function resolveModelPath(role: ModelRole, config: Config, env: ModelPath
     const bundled = join(env.resourcesDir, 'detector', fileName)
     return env.exists(bundled) ? bundled : { missing: true, expectedPath: bundled }
   }
+  // The full package ships the default models next to the app (resources/models).
+  const bundledModel = join(env.resourcesDir, 'models', fileName)
+  if (env.exists(bundledModel)) return bundledModel
   return { missing: true, expectedPath: inModelsDir }
 }

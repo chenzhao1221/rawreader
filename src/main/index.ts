@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { app, ipcMain, nativeTheme, net, safeStorage, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
 import { resolveTheme } from '../shared/theme'
+import { FLAVOR } from '../shared/flavor'
 import { INFOBAR_HEIGHT, MAX_TABS } from '../shared/constants'
 import type { EventChannel } from '../shared/ipc/channels'
 import type { EventPayload } from '../shared/ipc/contract'
@@ -90,6 +91,10 @@ function sendToShell<E extends EventChannel>(channel: E, payload: EventPayload<E
 
 async function bootstrap(): Promise<void> {
   const configService = await initConfig()
+  // The lite package has no model files: start it on Gemini until the user finishes the setup wizard.
+  if (FLAVOR === 'lite' && !getConfig().ui.setupDone && getConfig().translate.engine === 'local') {
+    updateConfig({ translate: { engine: 'gemini' } })
+  }
   const userDataDir = app.getPath('userData')
   const resourcesDir = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources')
   const { runDir, logsDir } = llamaPaths(userDataDir)

@@ -1,11 +1,26 @@
 import identity from './app-identity.json' with { type: 'json' }
 
+const flavor = process.env['RAWREADER_FLAVOR'] === 'lite' ? 'lite' : 'full'
+
+/**
+ * Two packages from one code base:
+ * - full: the default models ship in resources/models (OCR pair + Index-Translate-2B, 3.1 GB). NSIS cannot
+ *   build installers above 2 GB, so this one is a zip that runs where it is extracted.
+ * - lite: no model files, a normal NSIS installer. The wizard starts on Gemini; local models can be
+ *   downloaded later from the settings.
+ */
+const MODEL_SOURCES = [
+  { dir: '../ocr-vl-test/llamacpp/models', file: 'PaddleOCR-VL-1.5.gguf' },
+  { dir: '../ocr-vl-test/llamacpp/models', file: 'PaddleOCR-VL-1.5-mmproj.gguf' },
+  { dir: '../wb-tests/models', file: 'Index-Translate-2B.Q4_K_M.gguf' },
+]
+
 /** @type {import('electron-builder').Configuration} */
 export default {
   appId: identity.appId,
   productName: identity.productName,
-  directories: { output: 'release' },
-  artifactName: '${productName}-Setup-${version}.${ext}',
+  directories: { output: `release/${flavor}` },
+  artifactName: flavor === 'full' ? '${productName}-${version}-full.${ext}' : '${productName}-Setup-${version}-lite.${ext}',
   files: [
     'out/**',
     'package.json',
@@ -55,8 +70,9 @@ export default {
     { from: 'LICENSE', to: 'licenses/LICENSE' },
     { from: 'THIRD_PARTY_NOTICES.md', to: 'licenses/THIRD_PARTY_NOTICES.md' },
     { from: 'resources/fonts/OFL.txt', to: 'licenses/NotoSansSC-OFL.txt' },
+    ...(flavor === 'full' ? MODEL_SOURCES.map(({ dir, file }) => ({ from: `${dir}/${file}`, to: `models/${file}` })) : []),
   ],
-  win: { target: 'nsis', icon: 'resources/icons/icon.png' },
+  win: { target: flavor === 'full' ? 'zip' : 'nsis', icon: 'resources/icons/icon.png' },
   nsis: {
     oneClick: false,
     perMachine: false,

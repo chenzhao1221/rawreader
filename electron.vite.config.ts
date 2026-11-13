@@ -4,8 +4,16 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 const root = import.meta.dirname
 
+/**
+ * Build flavour, set by `RAWREADER_FLAVOR` when packaging: "full" (local models, the default) or
+ * "lite" (Gemini only: no llama-server, no model files). Baked into main and renderer as a constant.
+ */
+const flavor = process.env['RAWREADER_FLAVOR'] === 'lite' ? 'lite' : 'full'
+const define = { __RAWREADER_FLAVOR__: JSON.stringify(flavor) }
+
 export default defineConfig({
   main: {
+    define,
     build: {
       outDir: 'out/main',
       rollupOptions: {
@@ -38,6 +46,7 @@ export default defineConfig({
     },
   },
   renderer: {
+    define,
     root: resolve(root, 'src/renderer'),
     plugins: [svelte({ configFile: resolve(root, 'svelte.config.js') })],
     build: {
