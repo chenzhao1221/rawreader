@@ -9,6 +9,7 @@ describe('ConfigSchema defaults', () => {
         autoTranslate: false,
         overlayVisible: true,
         bubblesOnly: false,
+        adBlock: true,
         lastUrl: null,
         openTabs: { urls: [], active: 0 },
         webTranslate: { alwaysLangs: [], neverLangs: [], neverSites: [] },

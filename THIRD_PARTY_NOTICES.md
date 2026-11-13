@@ -36,6 +36,20 @@ pm run build) fails when an installed production dependency is missing from the 
 | when-exit | 2.1.5 | MIT | Dependency of atomically |
 | electron-log | 5.4.4 | MIT | Rotating file logs in the main process |
 | p-queue | 10.0.0 | MIT | Per-stage queues with priority in the pipeline |
+| @ghostery/adblocker-electron | 2.20.3 | MPL-2.0 | Ad and tracker blocking in the built-in browser (unmodified; MPL-2.0 is file-level copyleft and GPL-compatible through its section 3.3) |
+| @ghostery/adblocker | 2.20.3 | MPL-2.0 | Dependency of @ghostery/adblocker-electron |
+| @ghostery/adblocker-electron-preload | 2.20.3 | MPL-2.0 | Dependency of @ghostery/adblocker-electron (cosmetic filtering in frames) |
+| @ghostery/adblocker-content | 2.20.3 | MPL-2.0 | Dependency of @ghostery/adblocker-electron-preload |
+| @ghostery/adblocker-extended-selectors | 2.20.3 | MPL-2.0 | Dependency of @ghostery/adblocker |
+| @ghostery/url-parser | 1.3.1 | MPL-2.0 | Dependency of @ghostery/adblocker |
+| @remusao/smaz | 2.2.0 | MPL-2.0 | Dependency of @ghostery/adblocker |
+| @remusao/smaz-compress | 2.2.0 | MPL-2.0 | Dependency of @remusao/smaz |
+| @remusao/smaz-decompress | 2.2.0 | MPL-2.0 | Dependency of @remusao/smaz |
+| @remusao/trie | 2.1.0 | MPL-2.0 | Dependency of @ghostery/adblocker |
+| @remusao/small | 2.1.0 | MPL-2.0 | Dependency of @remusao/trie |
+| @remusao/guess-url-type | 2.1.0 | MPL-2.0 | Dependency of @ghostery/adblocker |
+| tldts-experimental | 7.5.1 | MIT | Dependency of @ghostery/adblocker-electron |
+| tldts-core | 7.5.1 | MIT | Dependency of tldts-experimental |
 | onnxruntime-node | 1.31.1 | MIT | RT-DETR detector inference (CPU execution provider), runs in a utility process |
 | onnxruntime-common | 1.31.1 | MIT | Dependency of onnxruntime-node |
 | global-agent | 4.1.7 | BSD-3-Clause | Dependency of onnxruntime-node (install script only) |
@@ -58,6 +72,11 @@ pm run build) fails when an installed production dependency is missing from the 
 | @img/sharp-win32-x64 | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later | Prebuilt sharp binary with libvips (LGPL-3.0-or-later, dynamically linked) |
 | @img/colour | 1.1.0 | MIT | Dependency of sharp |
 | detect-libc | 2.1.2 | Apache-2.0 | Dependency of sharp |
+
+The ad-block filter lists themselves are not bundled. On first start `@ghostery/adblocker-electron` downloads the
+project's prebuilt engine from `ghostery/adblocker` on raw.githubusercontent.com (built from EasyList and EasyPrivacy,
+published under GPL-3.0 and CC BY-SA 3.0) and caches it under `userData/adblock/engine.bin`; it is refreshed every
+three days when the network allows.
 
 ## Build and test tooling (not shipped)
 

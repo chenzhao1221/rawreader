@@ -42,6 +42,7 @@ app/
    │  ├─ llm/              shared OpenAI-compatible fetch client (/v1/chat/completions only)
    │  ├─ cache/            SQLite result cache, keys, LRU eviction
    │  ├─ models/           manifest, downloader, verification, CUDA backend download
+   │  ├─ adblock/          Ghostery filter engine: cached download, refresh, session attachment
    │  └─ log/              electron-log setup and redaction
    ├─ preload/
    │  ├─ shell/            exposes the typed shell API via contextBridge

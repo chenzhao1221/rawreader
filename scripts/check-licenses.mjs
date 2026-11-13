@@ -9,8 +9,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-/** Normalised SPDX ids that are allowed. `BSD-*` is handled by prefix. */
-export const ALLOWED = new Set(['MIT', 'ISC', 'APACHE-2.0', 'LGPL-3.0', 'GPL-3.0', 'AGPL-3.0', 'OFL-1.1', 'ZLIB'])
+/** Normalised SPDX ids that are allowed. `BSD-*` is handled by prefix. MPL-2.0 (file-level copyleft, GPL-compatible
+ * through its section 3.3) is allowed for the Ghostery ad blocker, used unmodified. */
+export const ALLOWED = new Set(['MIT', 'ISC', 'APACHE-2.0', 'LGPL-3.0', 'GPL-3.0', 'AGPL-3.0', 'OFL-1.1', 'ZLIB', 'MPL-2.0'])
 /** Forbidden even though a looser rule might match (tech.md: GPL-2.0-only is forbidden). */
 export const FORBIDDEN = new Set(['GPL-2.0', 'GPL-2.0-ONLY'])
 

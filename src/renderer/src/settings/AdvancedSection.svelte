@@ -6,6 +6,7 @@
   let translateConcurrency = $state<number | null>(null)
   let readingDirection = $state<'ltr' | 'rtl'>('ltr')
   let bubblesOnly = $state(false)
+  let adBlock = $state(true)
   let huggingface = $state('')
   let modelscope = $state('')
   let cacheGb = $state(2)
@@ -18,6 +19,7 @@
     translateConcurrency = config.pipeline.translateConcurrency
     readingDirection = config.pipeline.readingDirection
     bubblesOnly = config.ui.bubblesOnly
+    adBlock = config.ui.adBlock
     huggingface = config.models.mirrors.huggingface
     modelscope = config.models.mirrors.modelscope
     cacheGb = Math.round((config.cache.maxBytes / 1024 ** 3) * 100) / 100
@@ -27,7 +29,7 @@
 
   async function save(): Promise<void> {
     const ok = await saveConfig({
-      ui: { bubblesOnly },
+      ui: { bubblesOnly, adBlock },
       pipeline: { ocrConcurrency, translateConcurrency, readingDirection },
       models: { mirrors: { huggingface: huggingface.trim(), modelscope: modelscope.trim() } },
       cache: { maxBytes: Math.max(0, Math.round(cacheGb * 1024 ** 3)) },
@@ -66,6 +68,10 @@
   <label class="check"><input type="checkbox" bind:checked={bubblesOnly} />{t.advanced.bubblesOnly}</label>
 </div>
 <p class="muted small">{t.advanced.bubblesOnlyNote}</p>
+<div class="row">
+  <label class="check"><input type="checkbox" bind:checked={adBlock} />{t.advanced.adBlock}</label>
+</div>
+<p class="muted small">{t.advanced.adBlockNote}</p>
 
 <h2>{t.advanced.mirrors}</h2>
 <div class="row">

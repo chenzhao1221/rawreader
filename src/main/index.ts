@@ -38,6 +38,7 @@ import { createTabManager } from './window/tabs'
 import type { TabManager } from './window/tabs'
 import type { BrowseView } from './window/browse-view'
 import { GoogleTranslator } from './webtext/google'
+import { AdBlock } from './adblock/adblock'
 import { WebTextService } from './webtext/service'
 import { createAppTray, showWindow } from './window/tray'
 import type { AppTray } from './window/tray'
@@ -91,6 +92,15 @@ async function bootstrap(): Promise<void> {
   const { runDir, logsDir } = llamaPaths(userDataDir)
 
   const browseSession = setupBrowseSession((notice) => sendToShell('shell:notice', notice))
+  // Started before any tab exists; with a cached engine blocking is on by the time the first page loads, a cold
+  // start downloads the lists in the background and the first page may load unfiltered.
+  const adBlock = new AdBlock({
+    session: browseSession,
+    cachePath: join(userDataDir, 'adblock', 'engine.bin'),
+    fetch: (url) => net.fetch(url),
+    logger: createLogger('adblock'),
+  })
+  void adBlock.setEnabled(getConfig().ui.adBlock)
 
   const shellWindow = createShellWindow(join(resourcesDir, 'icons', 'icon.png'))
   shell = shellWindow
@@ -332,6 +342,7 @@ async function bootstrap(): Promise<void> {
     sendToShell('config:changed', next)
     llama.handleConfigChange(next, previous)
     pipelineWiring.onConfigChanged(next)
+    if (next.ui.adBlock !== previous.ui.adBlock) void adBlock.setEnabled(next.ui.adBlock)
   })
 
   await shellWindow.loaded.catch((error: unknown) => {

@@ -131,6 +131,8 @@ export const zhCN = {
     rtl: '从右到左（日漫）',
     bubblesOnly: '只翻气泡里的字',
     bubblesOnlyNote: '开启后，气泡外的文字（拟声词、旁白等）不再识别、翻译或覆盖。关闭后可恢复显示。',
+    adBlock: '去广告',
+    adBlockNote: '拦截广告和跟踪请求，并隐藏网页上的广告位（用 uBlock Origin 同款名单，每 3 天更新一次）。某个网站显示不正常时可以先关掉试试。',
     mirrors: '下载镜像',
     huggingface: 'Hugging Face 镜像地址',
     modelscope: '魔搭社区（ModelScope）地址',

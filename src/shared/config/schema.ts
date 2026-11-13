@@ -84,6 +84,8 @@ export const ConfigSchema = z.object({
       overlayVisible: f.bool.default(true),
       /** Skip free-text units: no OCR, no translation, no overlay for them. Detection and the cache still keep them. */
       bubblesOnly: f.bool.default(false),
+      /** Ad and tracker blocking in the browse session (Ghostery engine). */
+      adBlock: f.bool.default(true),
       lastUrl: z.string().nullable().default(null),
       /** Tabs open at the last exit, reopened on start; main-process only. */
       openTabs: z
@@ -181,7 +183,7 @@ const serverPatchShape = {
 
 export const ConfigPatchSchema = z
   .strictObject({
-    ui: z.strictObject({ autoTranslate: f.bool, overlayVisible: f.bool, bubblesOnly: f.bool }).partial(),
+    ui: z.strictObject({ autoTranslate: f.bool, overlayVisible: f.bool, bubblesOnly: f.bool, adBlock: f.bool }).partial(),
     llama: z
       .strictObject({
         backend: f.backend,
