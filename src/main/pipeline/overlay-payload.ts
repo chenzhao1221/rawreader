@@ -1,5 +1,6 @@
 import type { OverlayResult } from '../../shared/ipc/contract'
 import type { ImageResult, Subscriber } from './types'
+import { looksLikeWatermark } from './watermark'
 
 /**
  * Builds the message the browse preload draws from. Only units with a usable
@@ -14,6 +15,8 @@ export function toOverlayPayload(subscriber: Subscriber, result: ImageResult): O
     height: Math.max(1, Math.round(result.height)),
     units: result.units
       .filter((unit) => unit.status === 'ok' && unit.translation.trim().length > 0)
+      // Results cached before the watermark filter existed still carry translated stamps.
+      .filter((unit) => !looksLikeWatermark(unit.ocrText))
       .map((unit) => ({
         kind: unit.kind,
         box: { x1: unit.drawBox.x1, y1: unit.drawBox.y1, x2: unit.drawBox.x2, y2: unit.drawBox.y2 },

@@ -14,7 +14,7 @@ const UnitSchema = z.object({
   ocrBox: BboxSchema,
   ocrText: z.string(),
   translation: z.string(),
-  status: z.enum(['ok', 'no-text', 'ocr-failed', 'translate-failed', 'echo', 'skipped']),
+  status: z.enum(['ok', 'no-text', 'ocr-failed', 'translate-failed', 'echo', 'skipped', 'watermark']),
 })
 
 /** What is stored per image: boxes, OCR text, translation, flags and the natural size. Never image bytes. */
@@ -40,7 +40,9 @@ const ROW_OVERHEAD_BYTES = 160
  * as a miss and overwrites it with a full run.
  */
 export function isCacheable(result: CachedImageInput): boolean {
-  return result.units.every((unit) => unit.status === 'ok' || unit.status === 'no-text' || unit.status === 'skipped')
+  return result.units.every(
+    (unit) => unit.status === 'ok' || unit.status === 'no-text' || unit.status === 'skipped' || unit.status === 'watermark',
+  )
 }
 
 /** Builds the JSON payload. Only whitelisted fields are copied, so nothing else can leak into the file. */

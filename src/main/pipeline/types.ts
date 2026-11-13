@@ -7,7 +7,7 @@ export type { PageImage }
  * skipped marks a unit the pipeline deliberately left alone (free text while bubbles-only is on). The unit is
  * still detected and stored, so turning the setting off later can fill it in.
  */
-export type UnitStatus = 'ok' | 'no-text' | 'ocr-failed' | 'translate-failed' | 'echo' | 'skipped'
+export type UnitStatus = 'ok' | 'no-text' | 'ocr-failed' | 'translate-failed' | 'echo' | 'skipped' | 'watermark'
 
 /** One translated region of an image. */
 export interface UnitResult {

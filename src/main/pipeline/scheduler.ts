@@ -5,6 +5,7 @@ import type { CaptureRequest, CaptureResult } from '../capture/capture'
 import type { DetectService } from '../detect/service'
 import type { DetectOk } from '../detect/protocol'
 import type { Logger } from '../log/log'
+import { looksLikeWatermark } from './watermark'
 import { hashPrefix } from '../log/redact'
 import type { OcrResult } from '../ocr/client'
 import type { TranslateRequest, TranslateResult } from '../translate/client'
@@ -387,8 +388,11 @@ export class Pipeline {
     )
     timings.ocrMs = performance.now() - ocrStart
 
+    // Scan-site stamps (a web address in the text) are dropped whole and kept out of the context too.
+    const watermark = texts.map((t) => !t.failed && looksLikeWatermark(t.text))
+
     // Translate: one request per unit, in parallel up to the translation queue limit.
-    const sources = texts.map((t) => t.text)
+    const sources = texts.map((t, index) => (watermark[index] ? '' : t.text))
     const translateStart = performance.now()
     const outcomes = await Promise.all(
       work.map(async (_unit, index): Promise<{ translation: string; failed: boolean; echo: boolean }> => {
@@ -408,6 +412,7 @@ export class Pipeline {
       const tr = outcomes[index] as { translation: string; failed: boolean; echo: boolean }
       let status: UnitResult['status'] = 'ok'
       if (ocr.failed) status = 'ocr-failed'
+      else if (watermark[index]) status = 'watermark'
       else if (ocr.text.trim().length === 0) status = 'no-text'
       else if (tr.failed) status = 'translate-failed'
       else if (tr.echo) status = 'echo'
