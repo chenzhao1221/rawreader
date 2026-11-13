@@ -39,8 +39,8 @@ export function modelFileId(role: ModelRole, path: ModelPathResult, sizeOf: (pat
 
 /** The part of the prompt setup that changes translations (prompt version, context length, reading order). */
 export function promptIdentity(config: Config): string {
-  const { promptVariant, contextUnits } = config.translate
-  return `${promptVersionFor(promptVariant)}+ctx${contextUnits}+${config.pipeline.readingDirection}+cov${config.pipeline.maxBoxImageCoverage}`
+  const { promptVariant, contextUnits, batch } = config.translate
+  return `${promptVersionFor(promptVariant)}+ctx${contextUnits}${batch && promptVariant === 'lmt' ? '+batch' : ''}+${config.pipeline.readingDirection}+cov${config.pipeline.maxBoxImageCoverage}`
 }
 
 export function buildCacheIdentity(

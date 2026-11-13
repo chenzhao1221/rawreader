@@ -40,7 +40,11 @@ export interface PipelineDeps {
   capture(request: CaptureRequest): Promise<CaptureResult>
   detect: DetectService
   ocr: { recognize(png: Uint8Array, signal?: AbortSignal): Promise<OcrResult> }
-  translator: { translate(request: TranslateRequest): Promise<TranslateResult> }
+  translator: {
+    translate(request: TranslateRequest): Promise<TranslateResult>
+    /** Optional: all bubbles of an image in one request; null entries are translated one by one. */
+    translateBatch?(sources: readonly string[], signal?: AbortSignal): Promise<(string | null)[]>
+  }
   /** `null` when both servers can take requests, otherwise why not. */
   serversUnavailable(): { code: string; message: string } | null
   /** Delivers a finished image to one element. Called only while enabled and for the current document. */
@@ -394,9 +398,18 @@ export class Pipeline {
     // Translate: one request per unit, in parallel up to the translation queue limit.
     const sources = texts.map((t, index) => (watermark[index] ? '' : t.text))
     const translateStart = performance.now()
+    // Whole image first, in one numbered request; a bubble the batch answer missed goes on its own below.
+    const filled = sources.filter((s) => s.trim().length > 0).length
+    const batch = this.deps.translator.translateBatch
+    const batched: readonly (string | null)[] =
+      batch && filled >= 2
+        ? await this.stage(doc, 'translate', distance, () => batch(sources, doc.controller.signal))
+        : []
     const outcomes = await Promise.all(
       work.map(async (_unit, index): Promise<{ translation: string; failed: boolean; echo: boolean }> => {
         if ((sources[index] ?? '').trim().length === 0) return { translation: '', failed: false, echo: false }
+        const fromBatch = batched[index]
+        if (typeof fromBatch === 'string' && fromBatch.length > 0) return { translation: fromBatch, failed: false, echo: false }
         const result = await this.stage(doc, 'translate', distance, () =>
           this.deps.translator.translate({ sources, index, signal: doc.controller.signal }),
         )

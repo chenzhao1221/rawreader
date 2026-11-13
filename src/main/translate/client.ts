@@ -1,13 +1,17 @@
 import { chat } from '../llm/chat'
 import type { ChatResult } from '../llm/chat'
 import {
+  BATCH_MAX_ITEMS,
   buildBareMtPrompt,
   buildBaselinePrompt,
+  buildBatchPrompt,
   buildContext,
   buildIndexPrompt,
   looksLikePromptEcho,
   maxTokensFor,
+  maxTokensForBatch,
   normalizeOcrForPrompt,
+  parseBatchOutput,
   stripThinking,
 } from './prompts'
 import type { PromptVariant } from './prompts'
@@ -82,10 +86,42 @@ export class TranslateClient {
     return { ok: true, translation: retry.text, echo: false, retriedBare: true, prompt: barePrompt }
   }
 
+  /**
+   * Translates every bubble of an image in numbered batches. Returns one entry per source: the
+   * translation, '' for an empty source, or null where the batch answer could not be used (the caller
+   * then translates that bubble on its own). Transport errors also give nulls, never a throw.
+   */
+  async translateBatch(rawSources: readonly string[], signal?: AbortSignal): Promise<(string | null)[]> {
+    const sources = rawSources.map((s) => normalizeOcrForPrompt(s ?? ''))
+    const out: (string | null)[] = sources.map((s) => (s.length === 0 ? '' : null))
+    const indexes = sources.flatMap((s, i) => (s.length > 0 ? [i] : []))
+    for (let start = 0; start < indexes.length; start += BATCH_MAX_ITEMS) {
+      const chunk = indexes.slice(start, start + BATCH_MAX_ITEMS)
+      const texts = chunk.map((i) => sources[i] as string)
+      // A single bubble gains nothing from the batch format.
+      if (texts.length < 2) continue
+      const answer = await this.ask(
+        buildBatchPrompt(texts, this.options.targetLang),
+        texts.join(''),
+        signal,
+        maxTokensForBatch(texts.map((t) => t.length)),
+      )
+      if (!answer.ok) continue
+      const lines = parseBatchOutput(answer.text, texts.length)
+      if (!lines) continue
+      chunk.forEach((sourceIndex, k) => {
+        const line = lines[k] as string
+        if (!looksLikePromptEcho(line, texts[k] as string)) out[sourceIndex] = line
+      })
+    }
+    return out
+  }
+
   private async ask(
     prompt: string,
     source: string,
     signal: AbortSignal | undefined,
+    maxTokens: number = maxTokensFor(source.length),
   ): Promise<{ ok: true; text: string } | { ok: false; error: { code: string; message: string } }> {
     const { options } = this
     let result: ChatResult | null = null
@@ -95,7 +131,7 @@ export class TranslateClient {
         port: options.getPort(),
         model: options.model,
         messages: [{ role: 'user', content: prompt }],
-        maxTokens: maxTokensFor(source.length),
+        maxTokens,
         temperature: 0,
         timeoutMs: options.timeoutMs ?? TRANSLATE_TIMEOUT_MS,
         ...(signal ? { signal } : {}),

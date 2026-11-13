@@ -61,7 +61,7 @@ describe('ConfigSchema defaults', () => {
         readingDirection: 'ltr',
         maxBoxImageCoverage: 0.85,
       },
-      translate: { targetLang: 'zh-Hans', promptVariant: 'lmt', contextUnits: 3 },
+      translate: { targetLang: 'zh-Hans', promptVariant: 'lmt', contextUnits: 3, batch: true },
       cache: { maxBytes: 2 * 1024 ** 3 },
     })
   })

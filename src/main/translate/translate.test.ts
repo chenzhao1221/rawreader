@@ -273,3 +273,25 @@ describe('misread hand-lettered Hangul', () => {
     expect(normalizeOcrForPrompt('Lhasa 여행')).toBe('Lhasa 여행')
   })
 })
+
+describe('batch translation format', () => {
+  it('numbers the bubbles in reading order and flattens line breaks', async () => {
+    const { buildBatchPrompt } = await import('./prompts')
+    const prompt = buildBatchPrompt(['내, 내가\n직접?', '그래.'], 'zh-Hans')
+    expect(prompt).toContain('1. 내, 내가 직접?\n2. 그래.')
+    expect(prompt).toContain('行数必须相同')
+  })
+
+  it('reads numbered answers back in order, whatever the separator', async () => {
+    const { parseBatchOutput } = await import('./prompts')
+    expect(parseBatchOutput('2、对。你来做。\n1. 我，我亲自？', 2)).toEqual(['我，我亲自？', '对。你来做。'])
+    expect(parseBatchOutput('1）好\n2：行', 2)).toEqual(['好', '行'])
+  })
+
+  it('gives up when a number is missing, empty or the prompt is echoed', async () => {
+    const { parseBatchOutput } = await import('./prompts')
+    expect(parseBatchOutput('1. 我，我亲自？', 2)).toBeNull()
+    expect(parseBatchOutput('1. 好\n2. ', 2)).toBeNull()
+    expect(parseBatchOutput('请将以下漫画对白翻译成简体中文\n1. 好\n2. 行', 2)).toBeNull()
+  })
+})

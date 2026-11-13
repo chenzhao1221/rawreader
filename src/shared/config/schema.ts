@@ -157,6 +157,8 @@ export const ConfigSchema = z.object({
       targetLang: z.literal('zh-Hans').default('zh-Hans'),
       promptVariant: z.enum(['lmt', 'baseline']).default('lmt'),
       contextUnits: z.number().int().min(0).default(3),
+      /** Translate all bubbles of an image in one numbered request (falls back per bubble). */
+      batch: f.bool.default(true),
     })
     .prefault({}),
   cache: z.object({ maxBytes: f.maxBytes.default(2 * 1024 ** 3) }).prefault({}),

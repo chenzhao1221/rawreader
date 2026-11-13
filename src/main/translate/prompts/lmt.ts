@@ -108,6 +108,48 @@ export function buildBareMtPrompt(text: string, targetLang: string): string {
   return `请将以下文本翻译为${zhLangName(targetLang)}，直接输出翻译结果，不要进行任何解释。\n\n${text}`
 }
 
+/** Most bubbles sent in one batch request; a page with more is split. */
+export const BATCH_MAX_ITEMS = 20
+
+/**
+ * All bubbles of one image in one request, numbered in reading order, so the model sees the whole
+ * exchange and keeps who-says-what consistent. Line breaks inside a bubble become spaces, because
+ * the answer is read back line by line.
+ */
+export function buildBatchPrompt(texts: readonly string[], targetLang: string): string {
+  const tgt = zhLangName(targetLang)
+  const rules = isChineseTarget(targetLang) ? ZH_STYLE_RULES : []
+  const notes = rules.length > 0 ? `\n要求：\n${rules.map((rule) => `- ${rule}`).join('\n')}\n` : '\n'
+  const lines = texts.map((text, i) => `${i + 1}. ${text.replace(/\s*\n\s*/g, ' ')}`).join('\n')
+  return (
+    `请将以下漫画对白翻译成${tgt}。这些是同一页的对白，按阅读顺序排列，每行一句，行首是编号。` +
+    `按同样的编号逐行输出译文，行数必须相同，不要合并或拆分，不要解释。${notes}\n${lines}`
+  )
+}
+
+/**
+ * Reads the numbered answer back. Returns null when any number from 1 to `count` is missing or empty,
+ * or when the model echoed the instructions: the caller then translates bubble by bubble.
+ */
+export function parseBatchOutput(output: string, count: number): string[] | null {
+  if (/请将以下|行数必须相同|按同样的编号|要求：/.test(output)) return null
+  const found = new Map<number, string>()
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^\s*(\d{1,3})\s*[.、．:：)）]\s*(.*)$/.exec(line)
+    if (!match) continue
+    const n = Number(match[1])
+    const text = (match[2] ?? '').trim()
+    if (n >= 1 && n <= count && text && !found.has(n)) found.set(n, text)
+  }
+  if (found.size !== count) return null
+  return Array.from({ length: count }, (_, i) => found.get(i + 1) as string)
+}
+
+/** Token cap for a batch: the per-bubble caps added up, bounded. */
+export function maxTokensForBatch(lengths: readonly number[]): number {
+  return Math.min(2048, lengths.reduce((sum, length) => sum + maxTokensFor(length) + 8, 16))
+}
+
 /**
  * Small MT models sometimes echo the prompt scaffolding (or run on until
  * max_tokens) instead of translating. Such output must never reach a bubble.

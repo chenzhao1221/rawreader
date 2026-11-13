@@ -43,7 +43,8 @@ describe('model and prompt identity', () => {
 
   it('includes prompt variant, context length and reading direction', () => {
     const base = promptIdentity(ConfigSchema.parse({}))
-    expect(base).toBe('lmt-3+ctx3+ltr+cov0.85')
+    expect(base).toBe('lmt-3+ctx3+batch+ltr+cov0.85')
+    expect(promptIdentity(ConfigSchema.parse({ translate: { batch: false } }))).not.toBe(base)
     expect(promptIdentity(ConfigSchema.parse({ translate: { promptVariant: 'baseline' } }))).not.toBe(base)
     expect(promptIdentity(ConfigSchema.parse({ translate: { contextUnits: 0 } }))).not.toBe(base)
     expect(promptIdentity(ConfigSchema.parse({ pipeline: { readingDirection: 'rtl' } }))).not.toBe(base)

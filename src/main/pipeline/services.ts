@@ -31,6 +31,7 @@ export function createModelClients(
   getConfig: () => Config,
   getStatus: (role: ServerRole) => ServerStatus | null,
 ): Pick<PipelineDeps, 'ocr' | 'translator'> {
+  const clientFor = (config: Config): TranslateClient => clientForConfig(config, getStatus)
   return {
     ocr: {
       recognize(png, signal) {
@@ -43,15 +44,27 @@ export function createModelClients(
     },
     translator: {
       translate(request: TranslateRequest): Promise<TranslateResult> {
+        return clientFor(getConfig()).translate(request)
+      },
+      // Batch mode needs the Index prompt rules; the baseline variant stays one bubble per request.
+      translateBatch(sources, signal) {
         const config = getConfig()
-        return new TranslateClient({
-          getPort: () => effectivePort(getStatus('translate'), config.llama.translate.port),
-          model: config.llama.translate.alias,
-          targetLang: config.translate.targetLang,
-          promptVariant: config.translate.promptVariant,
-          contextUnits: config.translate.contextUnits,
-        }).translate(request)
+        if (!config.translate.batch || config.translate.promptVariant !== 'lmt') return Promise.resolve(sources.map(() => null))
+        return clientFor(config).translateBatch(sources, signal)
       },
     },
   }
+}
+
+function clientForConfig(
+  config: Config,
+  getStatus: (role: ServerRole) => ServerStatus | null,
+): TranslateClient {
+  return new TranslateClient({
+    getPort: () => effectivePort(getStatus('translate'), config.llama.translate.port),
+    model: config.llama.translate.alias,
+    targetLang: config.translate.targetLang,
+    promptVariant: config.translate.promptVariant,
+    contextUnits: config.translate.contextUnits,
+  })
 }
