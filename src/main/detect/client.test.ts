@@ -26,7 +26,7 @@ const okResult = {
   timings: { decodeMs: 1, inferMs: 2, cropMs: 3 },
 }
 
-const job = { bytes: new Uint8Array([1]), ocrPadding: 8, readingDirection: 'ltr' as const }
+const job = { bytes: new Uint8Array([1]), ocrPadding: 8, readingDirection: 'ltr' as const, maxBoxImageCoverage: 0.85 }
 
 describe('DetectClient', () => {
   it('initialises the worker once and returns detect results', async () => {

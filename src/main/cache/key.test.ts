@@ -8,13 +8,13 @@ const identity: CacheIdentity = {
   detectorId: 'detector-v4-s_int8.onnx:11120765',
   ocrModelId: 'PaddleOCR-VL-1.5.gguf:935768992',
   mtModelId: 'Index-Translate-2B.Q4_K_M.gguf:1312164352',
-  promptVersion: 'lmt-2+ctx3+ltr',
+  promptVersion: 'lmt-2+ctx3+ltr+cov0.85',
 }
 
 describe('buildCacheKey', () => {
   it('joins the content hash and every identity part with |', () => {
     expect(buildCacheKey('abc', identity)).toBe(
-      'abc|zh-Hans|detector-v4-s_int8.onnx:11120765|PaddleOCR-VL-1.5.gguf:935768992|Index-Translate-2B.Q4_K_M.gguf:1312164352|lmt-2+ctx3+ltr',
+      'abc|zh-Hans|detector-v4-s_int8.onnx:11120765|PaddleOCR-VL-1.5.gguf:935768992|Index-Translate-2B.Q4_K_M.gguf:1312164352|lmt-2+ctx3+ltr+cov0.85',
     )
   })
 
@@ -43,10 +43,11 @@ describe('model and prompt identity', () => {
 
   it('includes prompt variant, context length and reading direction', () => {
     const base = promptIdentity(ConfigSchema.parse({}))
-    expect(base).toBe('lmt-2+ctx3+ltr')
+    expect(base).toBe('lmt-2+ctx3+ltr+cov0.85')
     expect(promptIdentity(ConfigSchema.parse({ translate: { promptVariant: 'baseline' } }))).not.toBe(base)
     expect(promptIdentity(ConfigSchema.parse({ translate: { contextUnits: 0 } }))).not.toBe(base)
     expect(promptIdentity(ConfigSchema.parse({ pipeline: { readingDirection: 'rtl' } }))).not.toBe(base)
+    expect(promptIdentity(ConfigSchema.parse({ pipeline: { maxBoxImageCoverage: 0.9 } }))).not.toBe(base)
   })
 
   it('builds the identity from resolved model paths', () => {

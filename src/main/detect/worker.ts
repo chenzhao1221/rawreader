@@ -30,7 +30,12 @@ process.parentPort.on('message', (event) => {
         return
       }
       void service
-        .detect({ bytes: request.bytes, ocrPadding: request.ocrPadding, readingDirection: request.readingDirection })
+        .detect({
+          bytes: request.bytes,
+          ocrPadding: request.ocrPadding,
+          readingDirection: request.readingDirection,
+          maxBoxImageCoverage: request.maxBoxImageCoverage,
+        })
         .then((outcome) => {
           reply(outcome.ok ? { id: request.id, ok: true, result: outcome.result } : { id: request.id, ok: false, error: outcome.error })
         })

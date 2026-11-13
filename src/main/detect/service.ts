@@ -7,6 +7,7 @@ export interface DetectJob {
   bytes: Uint8Array
   ocrPadding: number
   readingDirection: ReadingDirection
+  maxBoxImageCoverage: number
 }
 
 export type DetectOutcome = { ok: true; result: DetectOk } | { ok: false; error: { code: string; message: string } }
@@ -37,7 +38,10 @@ export class InProcessDetectService implements DetectService {
     const run = async (): Promise<DetectOutcome> => {
       try {
         const detector = await this.load()
-        const { image, result } = await detector.detect(job.bytes, { readingDirection: job.readingDirection })
+        const { image, result } = await detector.detect(job.bytes, {
+          readingDirection: job.readingDirection,
+          maxBoxImageCoverage: job.maxBoxImageCoverage,
+        })
         const cropStart = performance.now()
         const units = await Promise.all(
           result.units.map(async (unit) => ({

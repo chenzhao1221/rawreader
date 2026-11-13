@@ -8,6 +8,7 @@
 import { performance } from 'node:perf_hooks'
 import * as ortNamespace from 'onnxruntime-node'
 import sharp from 'sharp'
+import { DEFAULT_MAX_BOX_IMAGE_COVERAGE, dropOversizedBoxes } from './coverage'
 import { cropRaw, paddedRect } from './raw'
 import type { PixelRect } from './raw'
 import { DEFAULT_MIN_CONFIDENCE, INPUT_SIZE, LETTERBOX_FILL, decodeRtDetrOutputs, finalizeDetections, offsetBoxes, rgbToChw } from './rtdetr'
@@ -32,6 +33,8 @@ export interface RawImage {
 export interface DetectOptions {
   minConfidence?: number
   readingDirection?: ReadingDirection
+  /** Boxes covering at least this share of the image are dropped. Defaults to DEFAULT_MAX_BOX_IMAGE_COVERAGE. */
+  maxBoxImageCoverage?: number
 }
 
 export interface DetectResult {
@@ -107,7 +110,8 @@ export class Detector {
       rawGroups = { textBoxes, bubbleBoxes }
     }
 
-    const groups = finalizeDetections(rawGroups, image.width, image.height, tiled)
+    const finalized = finalizeDetections(rawGroups, image.width, image.height, tiled)
+    const groups = dropOversizedBoxes(finalized, image.width, image.height, options.maxBoxImageCoverage ?? DEFAULT_MAX_BOX_IMAGE_COVERAGE)
     const units = buildUnits(groups, options.readingDirection ?? 'ltr')
     return { width: image.width, height: image.height, tiled, tileCount, groups, units, inferMs: performance.now() - started }
   }

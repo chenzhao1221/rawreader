@@ -1,6 +1,9 @@
 import { z } from 'zod'
 import { findForbiddenExtraArgs } from './extra-args'
 
+/** Detector boxes covering at least this share of the image area are discarded as whole-image false positives. */
+export const DEFAULT_MAX_BOX_IMAGE_COVERAGE = 0.85
+
 /**
  * Field-level schemas without defaults. The main schema adds defaults, the
  * patch schema reuses them as-is. Reusing a schema that has `.default()` inside
@@ -27,6 +30,8 @@ const f = {
   concurrency: z.number().int().min(1).nullable(),
   minImageSize: z.number().int().min(1),
   readingDirection: z.enum(['ltr', 'rtl']),
+  /** Ratio in (0, 1]. */
+  maxBoxImageCoverage: z.number().gt(0).max(1),
   maxBytes: z.number().int().min(0),
   url: z.url(),
   bool: z.boolean(),
@@ -119,6 +124,7 @@ export const ConfigSchema = z.object({
       rootMarginPx: z.number().int().default(200),
       maxImageBytes: z.number().int().positive().default(50 * 1024 * 1024),
       readingDirection: f.readingDirection.default('ltr'),
+      maxBoxImageCoverage: f.maxBoxImageCoverage.default(DEFAULT_MAX_BOX_IMAGE_COVERAGE),
     })
     .prefault({}),
   translate: z
@@ -179,6 +185,7 @@ export const ConfigPatchSchema = z
         ocrConcurrency: f.concurrency,
         translateConcurrency: f.concurrency,
         readingDirection: f.readingDirection,
+        maxBoxImageCoverage: f.maxBoxImageCoverage,
       })
       .partial(),
     cache: z.strictObject({ maxBytes: f.maxBytes }).partial(),

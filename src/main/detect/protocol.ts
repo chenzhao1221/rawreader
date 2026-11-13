@@ -20,6 +20,7 @@ export const DetectRequestSchema = z.discriminatedUnion('type', [
     /** Pixels added around each OCR crop. */
     ocrPadding: z.number().int().min(0).max(64),
     readingDirection: z.enum(['ltr', 'rtl']),
+    maxBoxImageCoverage: z.number().gt(0).max(1),
   }),
   z.object({ id: z.number().int(), type: z.literal('dispose') }),
 ])

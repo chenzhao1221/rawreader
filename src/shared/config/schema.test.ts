@@ -48,6 +48,7 @@ describe('ConfigSchema defaults', () => {
         rootMarginPx: 200,
         maxImageBytes: 50 * 1024 * 1024,
         readingDirection: 'ltr',
+        maxBoxImageCoverage: 0.85,
       },
       translate: { targetLang: 'zh-Hans', promptVariant: 'lmt', contextUnits: 3 },
       cache: { maxBytes: 2 * 1024 ** 3 },
@@ -84,6 +85,16 @@ describe('ConfigPatchSchema', () => {
     expect(ConfigPatchSchema.safeParse({ llama: { ocr: { port: 80 } } }).success).toBe(false)
     expect(ConfigPatchSchema.safeParse({ llama: { backend: 'metal' } }).success).toBe(false)
     expect(ConfigPatchSchema.safeParse({ llama: { ocr: { extraArgs: ['--host'] } } }).success).toBe(false)
+  })
+
+  it('accepts maxBoxImageCoverage in (0, 1] and rejects 0 and values above 1', () => {
+    const parse = (v: number) => ConfigPatchSchema.safeParse({ pipeline: { maxBoxImageCoverage: v } }).success
+    expect(parse(0.5)).toBe(true)
+    expect(parse(1)).toBe(true)
+    expect(parse(0)).toBe(false)
+    expect(parse(1.01)).toBe(false)
+    expect(ConfigSchema.safeParse({ pipeline: { maxBoxImageCoverage: 0 } }).success).toBe(false)
+    expect(ConfigSchema.safeParse({ pipeline: { maxBoxImageCoverage: 2 } }).success).toBe(false)
   })
 
   it('accepts null to clear a path override', () => {

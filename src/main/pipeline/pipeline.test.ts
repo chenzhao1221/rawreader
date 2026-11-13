@@ -66,6 +66,7 @@ function setup(overrides: {
     ocrConcurrency: 2,
     translateConcurrency: 2,
     readingDirection: 'ltr',
+    maxBoxImageCoverage: 0.85,
     ocrPadding: 8,
     maxUnitsPerImage: 50,
     ...overrides.settings,

@@ -118,6 +118,7 @@ export const ConfigSchema = z.object({
     rootMarginPx: z.number().int().default(200),
     maxImageBytes: z.number().int().default(50 * 1024 * 1024),
     readingDirection: z.enum(['ltr', 'rtl']).default('ltr'),
+    maxBoxImageCoverage: z.number().gt(0).max(1).default(0.85), // boxes covering >= this share of the image are dropped
   }).default({}),
   translate: z.object({
     targetLang: z.literal('zh-Hans').default('zh-Hans'),
@@ -272,6 +273,7 @@ For each `run/llama-*.pid.json`: parse with zod (invalid → delete file). `info
 
 - `worker.ts` is the `utilityProcess` entry; messages are `{ id, bytes } → { id, units } | { id, error }` validated with zod on both sides.
 - Ported from LMT `lib/detections/`: `rtdetr.ts` (preprocess, tensor layout), `tiling.ts` (`planDetectionTiles`, `mergeTiledBoxes`, `boxIoU`), `utils.ts` (`scalingImage`, `restoreBoundingBox`, `containmentNMS`), `boxes.ts` (`refineDetections`, `mergeCentreInBox`). Canvas/`ImageData` is replaced by sharp raw RGB buffers. The `textBoxes.length > 0 ? textBoxes : bubbleBoxes` selection is **not** ported.
+- Whole-image filter (`coverage.ts`, ours, pure): after `finalizeDetections` and before `buildUnits`, bubble and text boxes whose area is at least `pipeline.maxBoxImageCoverage` (default 0.85) of the image area are dropped as whole-image false positives (header logos, covers). The threshold travels through `PipelineSettings` → `DetectJob` → worker message → `DetectOptions`, and is part of the cache identity (`+cov<ratio>`).
 - Unit building (`units.ts`, ours, pure):
   - For each bubble, collect text boxes whose centre lies inside it.
   - Bubble with text boxes → unit `{ kind: 'bubble', drawBox: bubble, ocrBox: union(textBoxes) }`.

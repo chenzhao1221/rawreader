@@ -81,6 +81,7 @@ Scope and decisions come from `.kiro/steering/product.md` and `.kiro/specs/modul
 5. THE SYSTEM SHALL build units: a bubble with its contained text boxes, a bubble with no text box (OCR'd as the whole bubble), and free text boxes outside any bubble.
 6. THE SYSTEM SHALL order units by reading order (top to bottom, then left to right; right to left when configured).
 7. IF the detector fails to load or run, THEN THE SYSTEM SHALL mark the image as `error` and keep the app responsive.
+8. THE SYSTEM SHALL discard every detected box (bubble or text) whose area is at least 85% of the image area, configurable as `pipeline.maxBoxImageCoverage` (ratio in (0, 1], default 0.85), as a whole-image false positive such as a header logo or cover. This filter runs before unit building and does not weaken R6.4 or R6.5: bubble-only boxes below the threshold and free text units are kept.
 
 ## R7. OCR (M4)
 

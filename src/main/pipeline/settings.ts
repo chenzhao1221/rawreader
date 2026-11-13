@@ -15,6 +15,7 @@ export function pipelineSettingsFrom(config: Config): PipelineSettings {
     ocrConcurrency: config.pipeline.ocrConcurrency ?? config.llama.ocr.parallel,
     translateConcurrency: config.pipeline.translateConcurrency ?? config.llama.translate.parallel,
     readingDirection: config.pipeline.readingDirection,
+    maxBoxImageCoverage: config.pipeline.maxBoxImageCoverage,
     ocrPadding: OCR_PADDING_PX,
     maxUnitsPerImage: MAX_UNITS_PER_IMAGE,
   }

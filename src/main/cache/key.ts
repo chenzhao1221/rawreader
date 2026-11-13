@@ -40,7 +40,7 @@ export function modelFileId(role: ModelRole, path: ModelPathResult, sizeOf: (pat
 /** The part of the prompt setup that changes translations (prompt version, context length, reading order). */
 export function promptIdentity(config: Config): string {
   const { promptVariant, contextUnits } = config.translate
-  return `${promptVersionFor(promptVariant)}+ctx${contextUnits}+${config.pipeline.readingDirection}`
+  return `${promptVersionFor(promptVariant)}+ctx${contextUnits}+${config.pipeline.readingDirection}+cov${config.pipeline.maxBoxImageCoverage}`
 }
 
 export function buildCacheIdentity(

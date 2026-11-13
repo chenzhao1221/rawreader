@@ -18,6 +18,8 @@ export interface PipelineSettings {
   ocrConcurrency: number
   translateConcurrency: number
   readingDirection: 'ltr' | 'rtl'
+  /** Detector boxes covering at least this share of the image are dropped. */
+  maxBoxImageCoverage: number
   /** Pixels around each OCR crop (R7.1). */
   ocrPadding: number
   /** Upper bound on units per image; protects the servers from detector noise. */
@@ -326,7 +328,12 @@ export class Pipeline {
 
     const detectStart = performance.now()
     const detected = await this.stage(doc, 'detect', distance, () =>
-      this.deps.detect.detect({ bytes: image.bytes, ocrPadding: settings.ocrPadding, readingDirection: settings.readingDirection }),
+      this.deps.detect.detect({
+        bytes: image.bytes,
+        ocrPadding: settings.ocrPadding,
+        readingDirection: settings.readingDirection,
+        maxBoxImageCoverage: settings.maxBoxImageCoverage,
+      }),
     )
     timings.detectMs = performance.now() - detectStart
     if (!detected.ok) throw new StageFailure(detected.error.code, detected.error.message)

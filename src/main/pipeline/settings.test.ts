@@ -9,6 +9,7 @@ describe('pipeline settings', () => {
       ocrConcurrency: 1,
       translateConcurrency: 1,
       readingDirection: 'ltr',
+      maxBoxImageCoverage: 0.85,
       ocrPadding: OCR_PADDING_PX,
       maxUnitsPerImage: MAX_UNITS_PER_IMAGE,
       maxImageBytes: 50 * 1024 * 1024,

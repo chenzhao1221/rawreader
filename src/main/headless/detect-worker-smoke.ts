@@ -1,5 +1,6 @@
 import { DetectClient } from '../detect/client'
 import type { WorkerLike } from '../detect/client'
+import { DEFAULT_MAX_BOX_IMAGE_COVERAGE } from '../detect/coverage'
 import type { Logger } from '../log/log'
 
 /** A worker handle that also exposes its pid and exit state. `utilityProcess.fork()` returns such an object. */
@@ -82,7 +83,7 @@ export async function runDetectWorkerSmoke(options: DetectSmokeOptions): Promise
   const started = Date.now()
   let report: DetectSmokeReport = empty
   try {
-    const outcome = await client.detect({ bytes: options.imageBytes, ocrPadding: 8, readingDirection: 'ltr' })
+    const outcome = await client.detect({ bytes: options.imageBytes, ocrPadding: 8, readingDirection: 'ltr', maxBoxImageCoverage: DEFAULT_MAX_BOX_IMAGE_COVERAGE })
     if (!outcome.ok) {
       report = { ...empty, reason: `${outcome.error.code}: ${outcome.error.message}` }
     } else {

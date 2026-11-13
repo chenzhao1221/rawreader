@@ -56,6 +56,7 @@ export class DetectClient implements DetectService {
       bytes: job.bytes,
       ocrPadding: job.ocrPadding,
       readingDirection: job.readingDirection,
+      maxBoxImageCoverage: job.maxBoxImageCoverage,
     })
     return response.ok ? { ok: true, result: response.result as NonNullable<typeof response.result> } : { ok: false, error: response.error }
   }
