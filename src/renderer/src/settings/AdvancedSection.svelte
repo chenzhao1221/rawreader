@@ -18,6 +18,7 @@
     ocrConcurrency = config.pipeline.ocrConcurrency
     translateConcurrency = config.pipeline.translateConcurrency
     readingDirection = config.pipeline.readingDirection
+    ahead = aheadFrom(config.pipeline.rootMarginPx)
     bubblesOnly = config.ui.bubblesOnly
     adBlock = config.ui.adBlock
     huggingface = config.models.mirrors.huggingface
@@ -27,10 +28,16 @@
 
   const concurrencyOptions = [null, 1, 2, 3, 4, 6, 8] as const
 
+  /** Pre-translate distance presets, in CSS pixels. A stored value in between shows as the nearest preset. */
+  const AHEAD = { off: 0, near: 1000, far: 5000 } as const
+  type Ahead = keyof typeof AHEAD
+  const aheadFrom = (px: number): Ahead => (px < 500 ? 'off' : px < 3000 ? 'near' : 'far')
+  let ahead = $state<Ahead>('near')
+
   async function save(): Promise<void> {
     const ok = await saveConfig({
       ui: { bubblesOnly, adBlock },
-      pipeline: { ocrConcurrency, translateConcurrency, readingDirection },
+      pipeline: { ocrConcurrency, translateConcurrency, readingDirection, rootMarginPx: AHEAD[ahead] },
       models: { mirrors: { huggingface: huggingface.trim(), modelscope: modelscope.trim() } },
       cache: { maxBytes: Math.max(0, Math.round(cacheGb * 1024 ** 3)) },
     })
@@ -63,7 +70,16 @@
       <option value="rtl">{t.advanced.rtl}</option>
     </select>
   </label>
+  <label class="field">
+    <span>{t.advanced.ahead}</span>
+    <select bind:value={ahead}>
+      <option value="off">{t.advanced.aheadOff}</option>
+      <option value="near">{t.advanced.aheadNear}</option>
+      <option value="far">{t.advanced.aheadFar}</option>
+    </select>
+  </label>
 </div>
+<p class="muted small">{t.advanced.aheadNote}</p>
 <div class="row">
   <label class="check"><input type="checkbox" bind:checked={bubblesOnly} />{t.advanced.bubblesOnly}</label>
 </div>

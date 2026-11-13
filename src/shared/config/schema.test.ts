@@ -56,7 +56,7 @@ describe('ConfigSchema defaults', () => {
         ocrConcurrency: null,
         translateConcurrency: null,
         minImageSize: 200,
-        rootMarginPx: 200,
+        rootMarginPx: 1000,
         maxImageBytes: 50 * 1024 * 1024,
         readingDirection: 'ltr',
         maxBoxImageCoverage: 0.85,

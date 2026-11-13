@@ -145,7 +145,8 @@ export const ConfigSchema = z.object({
       ocrConcurrency: f.concurrency.default(null), // null = llama.ocr.parallel
       translateConcurrency: f.concurrency.default(null), // null = llama.translate.parallel
       minImageSize: f.minImageSize.default(200),
-      rootMarginPx: z.number().int().default(200),
+      /** How far below and above the viewport images start translating, in CSS pixels (settings: off / near / far). */
+      rootMarginPx: z.number().int().min(0).max(20_000).default(1000),
       maxImageBytes: z.number().int().positive().default(50 * 1024 * 1024),
       readingDirection: f.readingDirection.default('ltr'),
       maxBoxImageCoverage: f.maxBoxImageCoverage.default(DEFAULT_MAX_BOX_IMAGE_COVERAGE),
@@ -209,6 +210,7 @@ export const ConfigPatchSchema = z
         ocrConcurrency: f.concurrency,
         translateConcurrency: f.concurrency,
         readingDirection: f.readingDirection,
+        rootMarginPx: z.number().int().min(0).max(20_000),
         maxBoxImageCoverage: f.maxBoxImageCoverage,
       })
       .partial(),
