@@ -1,5 +1,8 @@
 import { MODEL_FILE_NAMES } from '../config/model-path'
 import type { ModelRole } from '../config/model-path'
+import type { Config } from '../../shared/config/schema'
+import { translatorOption } from '../../shared/models/translators'
+import type { TranslatorId } from '../../shared/models/translators'
 
 export type DownloadSource = 'huggingface' | 'modelscope'
 
@@ -78,6 +81,27 @@ export function manifestEntry(role: ModelRole): ManifestEntry {
   const entry = MODEL_MANIFEST.find((e) => e.role === role)
   if (!entry) throw new Error(`No manifest entry for ${role}`)
   return entry
+}
+
+/** Manifest entry for a local translation model choice. */
+export function translatorEntry(id: TranslatorId): ManifestEntry {
+  const option = translatorOption(id)
+  return {
+    role: 'translator',
+    fileName: option.fileName,
+    size: option.size,
+    sha256: option.sha256,
+    bundled: false,
+    huggingface: option.huggingface,
+    modelscope: option.modelscope,
+    displayName: option.displayName,
+    license: option.license,
+  }
+}
+
+/** The manifest for the current config: the translator row follows `models.translator`. */
+export function manifestFor(config: Config): readonly ManifestEntry[] {
+  return MODEL_MANIFEST.map((entry) => (entry.role === 'translator' ? translatorEntry(config.models.translator) : entry))
 }
 
 /** Roles a user must have before translation can start (the detector ships with the app). */

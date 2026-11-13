@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { ModelItem } from '../../../shared/ipc/contract'
+  import { TRANSLATOR_OPTIONS } from '../../../shared/models/translators'
+  import type { TranslatorId } from '../../../shared/models/translators'
   import { formatBytes, modelLabel, zhCN as t } from '../i18n/zh-CN'
   import {
     modelsClearPath,
@@ -8,11 +10,21 @@
     modelsPickFile,
     modelsPickFolder,
     modelsUseFile,
+    saveConfig,
     store,
   } from '../state.svelte'
 
   const models = $derived(store.models)
   const notice = $derived(store.modelNotice)
+  const translator = $derived<TranslatorId>(store.config?.models.translator ?? 'index-2b')
+
+  /** Switching the model restarts the translation server; a missing file shows up below with a download button. */
+  async function pickTranslator(id: TranslatorId): Promise<void> {
+    if (id === translator) return
+    await saveConfig({ models: { translator: id } })
+    const result = await window.rawreader.invoke('models:overview')
+    if (result.ok) store.models = result.value
+  }
 
   const isActive = (item: ModelItem): boolean =>
     item.download !== null && ['queued', 'downloading', 'verifying'].includes(item.download.status)
@@ -52,6 +64,22 @@
   {/if}
   {#if !models.downloadsAllowed}
     <p class="muted">{t.models.devNote}</p>
+  {/if}
+
+  {#if store.config?.translate.engine === 'local'}
+    <h2>{t.models.translatorTitle}</h2>
+    <div class="translators">
+      {#each TRANSLATOR_OPTIONS as option (option.id)}
+        <label class="translator" class:active={translator === option.id}>
+          <input type="radio" name="translator" value={option.id} checked={translator === option.id} onchange={() => pickTranslator(option.id)} />
+          <strong>{option.displayName}</strong>
+          <span class="muted">{formatBytes(option.size)} · {t.models.vram(formatBytes(option.vramBytes))}</span>
+          <span class="muted note">{option.note}</span>
+          <span class="muted note">{t.models.license}：{option.license}</span>
+        </label>
+      {/each}
+    </div>
+    <p class="muted small">{t.models.translatorNote}</p>
   {/if}
 
   <h2>{t.models.folder}</h2>
@@ -153,6 +181,36 @@
 {/if}
 
 <style>
+  .translators {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 8px;
+    max-width: 960px;
+  }
+  .translator {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 10px;
+    row-gap: 2px;
+    padding: 10px 12px;
+    background: #26282b;
+    border: 1px solid #393b40;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .translator.active {
+    border-color: #6b9eff;
+  }
+  .translator input {
+    grid-row: span 4;
+    margin-top: 3px;
+  }
+  .translator .muted {
+    font-size: 12px;
+  }
+  .small {
+    font-size: 12px;
+  }
   .setup {
     padding: 10px 14px;
     margin-bottom: 14px;

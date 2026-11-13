@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { TRANSLATOR_IDS } from '../models/translators'
 import { findForbiddenExtraArgs } from './extra-args'
 
 /** Detector boxes covering at least this share of the image area are discarded as whole-image false positives. */
@@ -133,6 +134,10 @@ export const ConfigSchema = z.object({
         })
         .prefault({}),
       autoDownload: f.bool.default(true),
+      /** Which local translation model the translation server runs (see shared/models/translators.ts). */
+      translator: z.enum(TRANSLATOR_IDS).default('index-2b'),
+      /** Files the user picked for the other translation models (`paths.translator` is the default model's). */
+      translatorPaths: z.partialRecord(z.enum(TRANSLATOR_IDS), f.path).default({}),
       mirrors: z
         .object({
           huggingface: f.url.default('https://hf-mirror.com'),
@@ -220,6 +225,8 @@ export const ConfigPatchSchema = z
           .strictObject({ detector: f.path, ocr: f.path, ocrMmproj: f.path, translator: f.path })
           .partial(),
         mirrors: z.strictObject({ huggingface: f.url, modelscope: f.url }).partial(),
+        translator: z.enum(TRANSLATOR_IDS),
+        translatorPaths: z.partialRecord(z.enum(TRANSLATOR_IDS), f.path),
       })
       .partial(),
     pipeline: z

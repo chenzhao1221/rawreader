@@ -50,6 +50,8 @@ describe('ConfigSchema defaults', () => {
         dir: null,
         paths: { detector: null, ocr: null, ocrMmproj: null, translator: null },
         autoDownload: true,
+        translator: 'index-2b',
+        translatorPaths: {},
         mirrors: { huggingface: 'https://hf-mirror.com', modelscope: 'https://modelscope.cn' },
       },
       pipeline: {

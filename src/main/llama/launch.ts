@@ -88,6 +88,6 @@ export function launchFingerprint(role: ServerRole, config: Config): string {
     modelsDir: config.models.dir,
     modelPaths: role === 'ocr'
       ? [config.models.paths.ocr, config.models.paths.ocrMmproj]
-      : [config.models.paths.translator],
+      : [config.models.paths.translator, config.models.translator, config.models.translatorPaths],
   })
 }

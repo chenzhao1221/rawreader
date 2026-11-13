@@ -1,13 +1,13 @@
 import { join } from 'node:path'
 import type { Config, DeepPartial } from '../../shared/config/schema'
 import type { ModelCheck, ModelItem, ModelNotice, ModelsActionResult, ModelsOverview } from '../../shared/ipc/contract'
-import { isMissingModel, resolveModelPath } from '../config/model-path'
+import { explicitModelPath, explicitPathPatch, isMissingModel, resolveModelPath } from '../config/model-path'
 import type { ModelPathEnv, ModelRole } from '../config/model-path'
 import type { Logger } from '../log/log'
 import { DownloadManager } from './download-manager'
 import type { DownloadManagerOptions } from './download-manager'
 import type { FetchLike } from './download'
-import { MODEL_MANIFEST } from './manifest'
+import { manifestFor } from './manifest'
 import type { ManifestEntry } from './manifest'
 import type { FileCheck, FileVerifier } from './verify'
 
@@ -49,12 +49,15 @@ const toModelCheck = (state: CheckState | undefined): ModelCheck => {
  */
 export class ModelService {
   private readonly manager: DownloadManager
-  private readonly manifest: readonly ManifestEntry[]
   private readonly checks = new Map<string, CheckState>()
   private disposed = false
 
+  /** Read per call: the translator row changes with `models.translator`. */
+  private get manifest(): readonly ManifestEntry[] {
+    return this.deps.manifest ?? manifestFor(this.deps.getConfig())
+  }
+
   constructor(private readonly deps: ModelServiceDeps) {
-    this.manifest = deps.manifest ?? MODEL_MANIFEST
     this.manager = new DownloadManager({
       fetch: deps.fetch,
       getTargetDir: () => this.modelsDir(),
@@ -169,9 +172,10 @@ export class ModelService {
     void this.deps.verifier.markVerified(entry, path)
     this.checks.set(path, 'ok')
     // A stale explicit path would keep shadowing the downloaded file.
-    const explicit = this.deps.getConfig().models.paths[entry.role]
+    const config = this.deps.getConfig()
+    const explicit = explicitModelPath(entry.role, config)
     if (explicit && !this.deps.env.exists(explicit)) {
-      this.deps.updateConfig({ models: { paths: { [entry.role]: null } } })
+      this.deps.updateConfig(explicitPathPatch(entry.role, config, null))
     }
     this.emit()
     if (!this.manager.isActive()) this.deps.onModelsReady?.()
@@ -217,7 +221,7 @@ export class ModelService {
   }
 
   clearPath(role: ModelRole): ModelsActionResult {
-    this.deps.updateConfig({ models: { paths: { [role]: null } } })
+    this.deps.updateConfig(explicitPathPatch(role, this.deps.getConfig(), null))
     this.refresh()
     return this.result(null)
   }
@@ -229,7 +233,7 @@ export class ModelService {
     const sizeCheck = await this.deps.verifier.checkSize(entry, path)
     if (sizeCheck.status === 'unreadable') return { code: 'unreadable', role, path }
     if (sizeCheck.status === 'size-mismatch' && !force) return { code: 'size-mismatch', role, path }
-    this.deps.updateConfig({ models: { paths: { [role]: path } } })
+    this.deps.updateConfig(explicitPathPatch(role, this.deps.getConfig(), path))
     this.checks.delete(path)
     this.refresh()
     return null
