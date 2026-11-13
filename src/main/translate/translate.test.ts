@@ -5,6 +5,7 @@ import {
   BASELINE_PROMPT_VERSION,
   CONTEXT_LIMITS,
   LMT_PROMPT_VERSION,
+  ZH_STYLE_RULES,
   buildBareMtPrompt,
   buildBaselinePrompt,
   buildContext,
@@ -20,18 +21,37 @@ import {
 } from './prompts'
 
 describe('prompt builders', () => {
-  it('builds the Index-Translate standard prompt without context', () => {
-    expect(buildIndexPrompt('Hello there', 'zh-Hans')).toBe(
-      '请将以下文本翻译为简体中文，直接输出翻译结果，不要进行任何解释。\n\nHello there',
+  it('builds the Index-Translate standard prompt without context for a non-Chinese target', () => {
+    expect(buildIndexPrompt('Hello there', 'Korean')).toBe(
+      '请将以下文本翻译为韩语，直接输出翻译结果，不要进行任何解释。\n\nHello there',
     )
   })
 
-  it('builds the constrained layout when context is present', () => {
+  it('adds the Chinese style rules as numbered constraints for a Chinese target', () => {
+    const prompt = buildIndexPrompt('Hello there', 'zh-Hans')
+    expect(prompt.startsWith('请将以下漫画对白翻译成简体中文，并且严格遵循所有约束要求。\n【源文】\nHello there\n【约束要求】\n1. ')).toBe(true)
+    ZH_STYLE_RULES.forEach((rule, i) => expect(prompt).toContain(`${i + 1}. ${rule}`))
+    expect(prompt).not.toContain('【参考前文】')
+    expect(prompt.endsWith('只输出译文，不要有任何额外说明。')).toBe(true)
+  })
+
+  it('numbers the context rule after the style rules when context is present', () => {
     const prompt = buildIndexPrompt('Run!', 'zh-Hans', ['Where is he?', 'Behind you'])
     expect(prompt).toContain('【源文】\nRun!')
     expect(prompt).toContain('【约束要求】')
+    expect(prompt).toContain(`${ZH_STYLE_RULES.length + 1}. 【参考前文】`)
     expect(prompt).toContain('Where is he? / Behind you')
     expect(prompt.endsWith('只输出译文，不要有任何额外说明。')).toBe(true)
+  })
+
+  it('keeps the constrained layout with only the context rule for a non-Chinese target', () => {
+    const prompt = buildIndexPrompt('Run!', 'Korean', ['Where is he?'])
+    expect(prompt).toContain('1. 【参考前文】')
+    expect(prompt).not.toContain(ZH_STYLE_RULES[0] as string)
+  })
+
+  it('never lets the style rules look like an echo of themselves in a translation', () => {
+    for (const rule of ZH_STYLE_RULES) expect(looksLikePromptEcho('你好，今天怎么样？', rule)).toBe(false)
   })
 
   it('builds the bare and baseline prompts', () => {

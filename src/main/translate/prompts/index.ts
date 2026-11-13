@@ -5,6 +5,7 @@ export { BASELINE_PROMPT_VERSION, buildBaselinePrompt } from './baseline'
 export { CONTEXT_LIMITS, truncateUtf8, utf8ByteLength } from './limits'
 export {
   LMT_PROMPT_VERSION,
+  ZH_STYLE_RULES,
   buildBareMtPrompt,
   buildContext,
   buildIndexPrompt,

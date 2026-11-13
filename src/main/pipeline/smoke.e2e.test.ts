@@ -25,10 +25,10 @@ import type { ImageResult } from './types'
  *
  *   $env:RAWREADER_E2E = '1'; npx vitest run src/main/pipeline/smoke.e2e.test.ts
  *
- * Output goes to `.e2e-out/` (git-ignored): smoke.log, smoke-result.json and the llama-server logs.
+ * Output goes to `.e2e-out/pipeline-smoke/` (git-ignored): smoke.log, smoke-result.json and the llama-server logs.
  */
 const root = join(import.meta.dirname, '../../..')
-const outDir = join(root, '.e2e-out')
+const outDir = join(root, '.e2e-out', 'pipeline-smoke')
 const logFile = join(outDir, 'smoke.log')
 const panelPath = join(root, 'fixtures/smoke/panel.png')
 

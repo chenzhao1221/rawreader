@@ -6,12 +6,28 @@
 // RawReader changes: only the Index-Translate branch is ported (no Hy-MT). Background context is the
 // source text of previous bubbles on the same image (series name, dictionary and previous page are
 // phase 2). The context rule line in `buildIndexPrompt` is ours and uses LMT's constrained prompt layout.
+// `ZH_STYLE_RULES` is condensed from LMT src/lib/prompts.ts (style rules for Chinese output).
 // The engine code (WebLLM, ensureEngine, runPlainChat) is not ported; HTTP lives in translate/client.ts.
 
 import { CONTEXT_LIMITS, truncateUtf8, utf8ByteLength } from './limits'
 
 /** Bump when any prompt text below changes. Part of the cache key (design section 12). */
-export const LMT_PROMPT_VERSION = 'lmt-1'
+export const LMT_PROMPT_VERSION = 'lmt-2'
+
+/**
+ * Style constraints for Chinese output, condensed from LMT `src/lib/prompts.ts` ("STYLE RULES FOR CHINESE OUTPUT"):
+ * small models default to stiff, literal translation without them. They go into the constraint list of the Index prompt.
+ */
+export const ZH_STYLE_RULES: readonly string[] = [
+  '用自然、口语化的中文，读起来像正规汉化组的译文，不要翻译腔。',
+  '按人物关系翻译敬语和称呼；网络流行语和俚语按意思翻译，不要按字面直译。',
+  '保留骂人、吐槽、惊叹的语气强弱；拟声词译成中文拟声词。',
+  '原文来自 OCR，可能有错字或断词；先按上下文猜出原句再翻译，不要把读不通的字母音译成人名。',
+]
+
+function isChineseTarget(lang: string): boolean {
+  return /^zh|chinese/i.test(lang)
+}
 
 const ZH_LANG_NAMES: Record<string, string> = {
   'zh-Hans': '简体中文',
@@ -75,10 +91,15 @@ export function buildContext(sources: readonly string[], index: number, maxUnits
  */
 export function buildIndexPrompt(text: string, targetLang: string, context: readonly string[] = []): string {
   const tgt = zhLangName(targetLang)
-  if (context.length === 0) {
+  const rules = [...(isChineseTarget(targetLang) ? ZH_STYLE_RULES : [])]
+  if (context.length > 0) {
+    rules.push(`【参考前文】同一页前面的对白，仅供理解语气和指代，不要翻译，不要输出: ${context.join(' / ')}`)
+  }
+  if (rules.length === 0) {
     return `请将以下文本翻译为${tgt}，直接输出翻译结果，不要进行任何解释。\n\n${text}`
   }
-  return `请将以下漫画对白翻译成${tgt}，并且严格遵循所有约束要求。\n【源文】\n${text}\n【约束要求】\n1. 【参考前文】同一页前面的对白，仅供理解语气和指代，不要翻译，不要输出: ${context.join(' / ')}\n只输出译文，不要有任何额外说明。`
+  const numbered = rules.map((rule, i) => `${i + 1}. ${rule}`).join('\n')
+  return `请将以下漫画对白翻译成${tgt}，并且严格遵循所有约束要求。\n【源文】\n${text}\n【约束要求】\n${numbered}\n只输出译文，不要有任何额外说明。`
 }
 
 /** Plain prompt with no context, used as the retry after an echo. */
