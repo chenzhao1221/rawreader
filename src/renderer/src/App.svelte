@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import appIcon from './assets/app-icon.png'
   import { label, zhCN as t } from './i18n/zh-CN'
   import SettingsPanel from './settings/SettingsPanel.svelte'
   import { activateTab, closeSettings, closeTab, go, initStore, navigate, newTab, openLogs, openSettings, setToggle, store } from './state.svelte'
@@ -54,6 +55,7 @@
 
 <div class="shell">
   <div class="tabstrip" role="tablist">
+    <img class="app-icon" src={appIcon} alt="" aria-hidden="true" />
     {#each store.tabs.tabs as tab (tab.id)}
       <div
         class="tab"
@@ -200,12 +202,28 @@
     display: flex;
     align-items: flex-end;
     gap: 2px;
+    /* The strip is the window's title bar: drag it to move the window, double-click to maximise. */
+    -webkit-app-region: drag;
+    /* Leave room on the right for the minimise / maximise / close buttons Windows draws on top. */
+    width: env(titlebar-area-width, calc(100vw - 140px));
+    box-sizing: border-box;
     padding: 0 6px;
     background: #1e1f22;
     /* With many tabs the strip scrolls instead of pushing the new-tab button out of reach. */
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: thin;
+  }
+  .tab,
+  .tab-new {
+    -webkit-app-region: no-drag;
+  }
+  .app-icon {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    margin: 0 6px 5px 2px;
+    align-self: flex-end;
   }
   .tab {
     display: flex;

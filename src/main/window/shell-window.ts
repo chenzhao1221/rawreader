@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { BrowserWindow, app } from 'electron'
 import { appIdentity } from '../../shared/app-identity'
+import { TAB_STRIP_HEIGHT } from '../../shared/constants'
 
 export interface ShellWindow {
   win: BrowserWindow
@@ -21,6 +22,11 @@ export function createShellWindow(iconPath?: string): ShellWindow {
     title: appIdentity.productName,
     ...(iconPath ? { icon: iconPath } : {}),
     backgroundColor: '#1e1f22',
+    // No system title bar and no menu bar: the tab strip is the title bar (drag region in App.svelte).
+    // Windows still draws its own minimise / maximise / close buttons over the strip's right end.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#1e1f22', symbolColor: '#dfe1e5', height: TAB_STRIP_HEIGHT },
+    autoHideMenuBar: true,
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/shell.cjs'),
       contextIsolation: true,
@@ -31,6 +37,7 @@ export function createShellWindow(iconPath?: string): ShellWindow {
   })
 
   win.once('ready-to-show', () => win.show())
+  win.removeMenu()
 
   const wc = win.webContents
   // The shell loads local files only: block navigation away and any new window.
