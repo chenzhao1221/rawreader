@@ -67,6 +67,46 @@ export const TabsStateSchema = z.object({
 })
 export type TabsState = z.infer<typeof TabsStateSchema>
 
+// --- Web-page text translation (Google Translate bar) ---
+
+export const WebTextPageSchema = z.object({
+  docId: z.string().min(1).max(64),
+  /** `<html lang>` as the page declares it, may be empty. */
+  lang: z.string().max(35),
+  /** A little visible text, used to detect the language when `lang` is missing. */
+  sample: z.string().max(600),
+})
+export type WebTextPage = z.infer<typeof WebTextPageSchema>
+
+export const WebTextRequestSchema = z.object({
+  docId: z.string().min(1).max(64),
+  texts: z.array(z.string().max(5000)).max(400),
+})
+export type WebTextRequest = z.infer<typeof WebTextRequestSchema>
+
+export const WebTextResultSchema = z.object({ translations: z.array(z.string()) })
+export type WebTextResult = z.infer<typeof WebTextResultSchema>
+
+/** main -> browse preload: start translating the page, or put the original text back. */
+export const WebTextCommandSchema = z.object({ action: z.enum(['translate', 'restore']) })
+export type WebTextCommand = z.infer<typeof WebTextCommandSchema>
+
+/** main -> shell: the translate bar of the active tab. */
+export const WebTextBarSchema = z.object({
+  tabId: z.number().int().nullable(),
+  state: z.enum(['hidden', 'offer', 'translating', 'translated', 'error']),
+  /** Base language code of the page ("en", "ko"), '' when unknown. */
+  lang: z.string(),
+  host: z.string(),
+})
+export type WebTextBar = z.infer<typeof WebTextBarSchema>
+
+export const WebTextBarActionSchema = z.object({
+  tabId: z.number().int(),
+  action: z.enum(['translate', 'restore', 'always', 'never-lang', 'never-site', 'dismiss']),
+})
+export type WebTextBarAction = z.infer<typeof WebTextBarActionSchema>
+
 export const ShellNoticeSchema = z.object({
   code: z.enum(['DOWNLOAD_CANCELLED', 'NAVIGATION_BLOCKED', 'LOAD_FAILED']),
 })
@@ -255,6 +295,12 @@ export const ipc = {
   'tabs:new': def(z.object({ input: z.string().max(4096).optional() }), NavResultSchema),
   'tabs:close': def(z.object({ id: z.number().int() }), z.void()),
   'tabs:activate': def(z.object({ id: z.number().int() }), z.void()),
+  'webtext:page': def(WebTextPageSchema, z.void(), ['browse']),
+  'webtext:translate': def(WebTextRequestSchema, WebTextResultSchema, ['browse']),
+  /** The page finished (or failed) a translate/restore run. */
+  'webtext:done': def(z.object({ docId: z.string().min(1).max(64), state: z.enum(['translated', 'restored', 'error']) }), z.void(), ['browse']),
+  'webtext:bar': def(z.void(), WebTextBarSchema),
+  'webtext:bar-action': def(WebTextBarActionSchema, z.void()),
   'config:get': def(z.void(), ConfigSchema),
   'config:update': def(ConfigPatchSchema, ConfigSchema),
   'llama:status': def(z.void(), z.array(ServerStatusSchema)),
@@ -290,6 +336,8 @@ export const events = {
   'browse:state': BrowseStateSchema,
   'tabs:state': TabsStateSchema,
   'shell:focus-address': z.object({}),
+  'webtext:command': WebTextCommandSchema,
+  'webtext:bar': WebTextBarSchema,
   'config:changed': ConfigSchema,
   'llama:status': ServerStatusSchema,
   'shell:notice': ShellNoticeSchema,

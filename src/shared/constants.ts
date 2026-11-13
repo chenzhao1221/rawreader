@@ -10,6 +10,9 @@ export const TOOLBAR_HEIGHT = 48
 /** Everything above the browse view: tab strip plus toolbar. */
 export const TOP_CHROME_HEIGHT = TAB_STRIP_HEIGHT + TOOLBAR_HEIGHT
 
+/** Height of the "translate this page?" bar under the toolbar, while it is shown. */
+export const INFOBAR_HEIGHT = 36
+
 /** Most tabs kept open (and restored on start). */
 export const MAX_TABS = 30
 

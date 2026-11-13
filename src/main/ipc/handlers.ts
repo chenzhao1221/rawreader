@@ -12,6 +12,11 @@ import type {
   ServerRole,
   ServerStatus,
   TabsState,
+  WebTextBar,
+  WebTextBarAction,
+  WebTextPage,
+  WebTextRequest,
+  WebTextResult,
 } from '../../shared/ipc/contract'
 import { normalizeAddress } from '../window/address'
 import type { BrowseAction } from '../window/browse-view'
@@ -36,6 +41,13 @@ export interface HandlerDeps {
   newTab(url: string | null): void
   closeTab(id: number): void
   activateTab(id: number): void
+  /** Browse preload reported its language once loaded. */
+  webTextPage(page: WebTextPage, senderId: number): void
+  /** Translates page text through Google (browse preload only). */
+  webTextTranslate(request: WebTextRequest, senderId: number): Promise<WebTextResult>
+  webTextDone(done: { docId: string; state: 'translated' | 'restored' | 'error' }, senderId: number): void
+  getWebTextBar(): WebTextBar
+  webTextBarAction(action: WebTextBarAction): void
   /** Bundled overlay font bytes, or null when the file is missing. */
   getOverlayFont(): Promise<Uint8Array | null>
   getCacheStats(): CacheStats
@@ -86,6 +98,19 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
   })
   registrar.handle('tabs:activate', ({ id }) => {
     deps.activateTab(id)
+  })
+
+  // Translate bar. The page channels accept browse tabs only; the bar channels the shell only.
+  registrar.handle('webtext:page', (page, event) => {
+    deps.webTextPage(page, event.sender.id)
+  })
+  registrar.handle('webtext:translate', (request, event) => deps.webTextTranslate(request, event.sender.id))
+  registrar.handle('webtext:done', (done, event) => {
+    deps.webTextDone(done, event.sender.id)
+  })
+  registrar.handle('webtext:bar', () => deps.getWebTextBar())
+  registrar.handle('webtext:bar-action', (action) => {
+    deps.webTextBarAction(action)
   })
 
   registrar.handle('config:get', () => deps.getConfig())

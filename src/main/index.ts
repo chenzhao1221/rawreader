@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, ipcMain, shell as electronShell } from 'electron'
+import { app, ipcMain, net, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
-import { MAX_TABS } from '../shared/constants'
+import { INFOBAR_HEIGHT, MAX_TABS } from '../shared/constants'
 import type { EventChannel } from '../shared/ipc/channels'
 import type { EventPayload } from '../shared/ipc/contract'
 import { createIdentityProvider } from './cache/identity'
@@ -36,6 +36,9 @@ import type { ShellWindow } from './window/shell-window'
 import { restorePlan, shortcutFor } from './window/tab-order'
 import { createTabManager } from './window/tabs'
 import type { TabManager } from './window/tabs'
+import type { BrowseView } from './window/browse-view'
+import { GoogleTranslator } from './webtext/google'
+import { WebTextService } from './webtext/service'
 import { createAppTray, showWindow } from './window/tray'
 import type { AppTray } from './window/tray'
 
@@ -147,7 +150,37 @@ async function bootstrap(): Promise<void> {
   wiring = pipelineWiring
 
   let panelOpen = false
+  let barShown = false
   let savedSession = JSON.stringify(getConfig().ui.openTabs)
+  const findTab = (id: number): BrowseView | undefined => tabs?.all().find((view) => view.webContentsId === id)
+  const webText = new WebTextService({
+    translator: new GoogleTranslator((url, init) => net.fetch(url, init)),
+    getPrefs: () => getConfig().ui.webTranslate,
+    setPrefs: (prefs) => {
+      updateConfig({ ui: { webTranslate: { alwaysLangs: [...prefs.alwaysLangs], neverLangs: [...prefs.neverLangs], neverSites: [...prefs.neverSites] } } })
+    },
+    sendCommand: (tabId, command) => {
+      const wc = findTab(tabId)?.webContents
+      if (wc && !wc.isDestroyed()) wc.send('webtext:command', command)
+    },
+    sendBar: (bar) => {
+      const shown = bar.state !== 'hidden'
+      if (shown !== barShown) {
+        barShown = shown
+        tabs?.relayout()
+      }
+      sendToShell('webtext:bar', bar)
+    },
+    getActiveTabId: () => tabs?.active()?.webContentsId ?? null,
+    getHost: (tabId) => {
+      try {
+        return new URL(findTab(tabId)?.getState().url ?? '').host
+      } catch {
+        return ''
+      }
+    },
+    logger: createLogger('webtext'),
+  })
   const tabManager = createTabManager({
     win,
     preloadPath: join(import.meta.dirname, '../preload/browse.cjs'),
@@ -164,15 +197,35 @@ async function bootstrap(): Promise<void> {
       savedSession = next
       updateConfig({ ui: { openTabs: { urls, active }, lastUrl: urls[active] ?? null } })
     },
-    onTabCreated: (view) => pipelineWiring.attachTab(view.webContents),
-    onTabClosed: (view) => pipelineWiring.detachTab(view.webContents),
-    onActiveChanged: (view) => pipelineWiring.setActiveTab(view ? view.webContents : null),
+    onTabCreated: (view) => {
+      pipelineWiring.attachTab(view.webContents)
+      const id = view.webContentsId
+      view.webContents.on('did-start-navigation', (details) => {
+        if (details.isMainFrame && !details.isSameDocument) webText.forget(id)
+      })
+    },
+    onTabClosed: (view) => {
+      pipelineWiring.detachTab(view.webContents)
+      webText.forget(view.webContentsId)
+    },
+    onActiveChanged: (view) => {
+      pipelineWiring.setActiveTab(view ? view.webContents : null)
+      // The bar belongs to the tab: show the new tab's bar (or none).
+      const bar = webText.barFor(view ? view.webContentsId : null)
+      const shown = bar.state !== 'hidden'
+      if (shown !== barShown) {
+        barShown = shown
+        tabs?.relayout()
+      }
+      sendToShell('webtext:bar', bar)
+    },
     onFocusAddress: () => {
       sendToShell('shell:focus-address', {})
       if (!win.isDestroyed()) win.webContents.focus()
     },
     isPanelOpen: () => panelOpen,
     isQuitting: () => quitting,
+    getExtraTop: () => (barShown ? INFOBAR_HEIGHT : 0),
   })
   tabs = tabManager
   win.webContents.on('before-input-event', (event, input) => {
@@ -245,6 +298,13 @@ async function bootstrap(): Promise<void> {
     controlLlama: (role, action) => llama.control(role, action),
     pageHello: (hello, senderId) => pipelineWiring.pageHello(hello, senderId),
     pageImages: (batch, senderId) => pipelineWiring.pageImages(batch, senderId),
+    webTextPage: (page, senderId) => {
+      void webText.pageReady(senderId, page)
+    },
+    webTextTranslate: async (request, senderId) => ({ translations: await webText.translate(senderId, request) }),
+    webTextDone: ({ docId, state }, senderId) => webText.done(senderId, docId, state),
+    getWebTextBar: () => webText.barFor(tabManager.active()?.webContentsId ?? null),
+    webTextBarAction: (action) => webText.barAction(action),
     getOverlayFont,
     getModelsOverview: () => modelService.getOverview(),
     modelsDownload: (action, role) => modelService.download(action, role),

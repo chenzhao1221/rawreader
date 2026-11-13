@@ -33,6 +33,20 @@ export const zhCN = {
     close: '关闭标签页（Ctrl+W）',
     untitled: '新标签页',
   },
+  webBar: {
+    offer: (lang: string): string => `这个网页是${lang}。要翻译成中文吗？`,
+    translating: '正在翻译成中文…',
+    translated: '已翻译成中文。',
+    error: '网页翻译失败。',
+    translate: '翻译',
+    showOriginal: '看原文',
+    retry: '重试',
+    always: (lang: string): string => `总是翻译${lang}`,
+    neverLang: (lang: string): string => `不翻译${lang}`,
+    neverSite: '这个网站不翻',
+    close: '关闭',
+    unknownLang: '外语',
+  },
   status: {
     openLogs: '打开日志文件夹',
     progress: '本页进度',
@@ -170,7 +184,15 @@ const noticeLabels: Record<ShellNotice['code'], string> = {
   LOAD_FAILED: '页面加载失败。',
 }
 
+/** Names of the languages most pages use. Others show as "外语". */
+const languageNames: Record<string, string> = {
+  en: '英语', ko: '韩语', ja: '日语', es: '西班牙语', pt: '葡萄牙语', fr: '法语', de: '德语', it: '意大利语',
+  ru: '俄语', th: '泰语', vi: '越南语', id: '印尼语', ms: '马来语', tr: '土耳其语', ar: '阿拉伯语', pl: '波兰语',
+  nl: '荷兰语', uk: '乌克兰语', fil: '菲律宾语', tl: '菲律宾语', hi: '印地语',
+}
+
 export const label = {
+  language: (code: string): string => languageNames[code] ?? zhCN.webBar.unknownLang,
   serverRole: (role: ServerRole): string => serverRoleLabels[role],
   serverState: (state: ServerState): string => serverStateLabels[state],
   llamaError: (code: LlamaErrorCode): string => llamaErrorLabels[code],

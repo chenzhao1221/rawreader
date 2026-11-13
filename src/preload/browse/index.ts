@@ -7,6 +7,7 @@ import type { IpcRendererEvent } from 'electron'
 import type { IpcResult, PageConfig, PageImage } from '../../shared/ipc/contract'
 import { OverlayManager, isOverlayResult } from './overlay'
 import { ScrollQueue } from './scroll-queue'
+import { WebTextTranslator, sampleText } from './webtext'
 
 /** New random id for every document load; main drops results for stale ids (R5.5). */
 const docId = crypto.randomUUID()
@@ -31,6 +32,24 @@ function applyConfig(config: PageConfig): void {
   overlay.setVisible(config.overlayVisible)
 }
 
+const webText = new WebTextTranslator({
+  doc: document,
+  async translate(texts) {
+    const result = (await ipcRenderer.invoke('webtext:translate', { docId, texts })) as IpcResult<{ translations: string[] }>
+    if (!result.ok) throw new Error(result.error.code)
+    return result.value.translations
+  },
+  done(state) {
+    void ipcRenderer.invoke('webtext:done', { docId, state })
+  },
+})
+
+/** Tells main the page language once the document is parsed, so it can offer a translation. */
+function reportLanguage(): void {
+  const lang = (document.documentElement.getAttribute('lang') ?? '').slice(0, 35)
+  void ipcRenderer.invoke('webtext:page', { docId, lang, sample: lang ? '' : sampleText(document) }).catch(() => {})
+}
+
 // Settings pushed from main (auto-translate toggled, config changed).
 ipcRenderer.on('page:config', (_event: IpcRendererEvent, config: PageConfig) => {
   applyConfig(config)
@@ -43,10 +62,24 @@ ipcRenderer.on('overlay:result', (_event: IpcRendererEvent, payload: unknown) =>
 
 /** Only top-level documents are scanned; sandboxed iframes get no preload anyway. */
 if (window.top === window) {
+  // Commands from the translate bar. Only the top document has a bar.
+  ipcRenderer.on('webtext:command', (_event: IpcRendererEvent, command: unknown) => {
+    const action = (command as { action?: unknown } | null)?.action
+    if (action === 'translate') void webText.translatePage()
+    else if (action === 'restore') webText.restore()
+  })
+
   void ipcRenderer
     .invoke('page:hello', { docId, url: location.href })
     .then((result: IpcResult<PageConfig>) => {
       if (result.ok) applyConfig(result.value)
     })
     .catch(() => {})
+
+  // Wait a moment after parsing: many sites set <html lang> or render their text with scripts.
+  const scheduleReport = (): void => {
+    setTimeout(reportLanguage, 800)
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scheduleReport, { once: true })
+  else scheduleReport()
 }

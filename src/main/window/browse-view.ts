@@ -1,6 +1,6 @@
 import { WebContentsView } from 'electron'
 import type { BrowserWindow, HandlerDetails, WindowOpenHandlerResponse } from 'electron'
-import { BROWSE_PARTITION } from '../../shared/constants'
+import { BROWSE_PARTITION, TOP_CHROME_HEIGHT } from '../../shared/constants'
 import type { BrowseState, ShellNotice } from '../../shared/ipc/contract'
 import { createLogger } from '../log/log'
 import { isHttpUrl } from './address'
@@ -26,6 +26,8 @@ export interface BrowseViewOptions {
   /** Decides what a `window.open` / target=_blank does (new tab, popup window, or nothing). */
   onWindowOpen: (details: HandlerDetails) => WindowOpenHandlerResponse
   onShortcut: (shortcut: TabShortcut) => void
+  /** Extra height above the page (the translate bar), in CSS pixels. */
+  getExtraTop: () => number
 }
 
 export interface BrowseView {
@@ -129,7 +131,7 @@ export function createBrowseView(options: BrowseViewOptions): BrowseView {
   const updateBounds = (): void => {
     if (win.isDestroyed()) return
     const [width, height] = win.getContentSize()
-    view.setBounds(computeBrowseBounds({ width: width ?? 0, height: height ?? 0 }))
+    view.setBounds(computeBrowseBounds({ width: width ?? 0, height: height ?? 0 }, TOP_CHROME_HEIGHT + options.getExtraTop()))
   }
   updateBounds()
   win.on('resize', updateBounds)

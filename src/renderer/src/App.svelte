@@ -3,7 +3,7 @@
   import appIcon from './assets/app-icon.png'
   import { label, zhCN as t } from './i18n/zh-CN'
   import SettingsPanel from './settings/SettingsPanel.svelte'
-  import { activateTab, closeSettings, closeTab, go, initStore, navigate, newTab, openLogs, openSettings, setToggle, store } from './state.svelte'
+  import { activateTab, closeSettings, closeTab, go, initStore, navigate, newTab, openLogs, openSettings, setToggle, store, webBarAction } from './state.svelte'
 
   let address = $state('')
   let focused = $state(false)
@@ -142,6 +142,35 @@
     </button>
   </form>
 
+  <!-- Always present so the grid rows stay in place; empty while the bar is hidden. -->
+  <div class="webbar-row">
+  {#if store.webBar.state !== 'hidden'}
+    {@const lang = label.language(store.webBar.lang)}
+    <div class="webbar" role="status">
+      <span class="webbar-icon" aria-hidden="true">文A</span>
+      {#if store.webBar.state === 'offer'}
+        <span class="webbar-text">{t.webBar.offer(lang)}</span>
+        <button type="button" class="primary" onclick={() => webBarAction('translate')}>{t.webBar.translate}</button>
+        <button type="button" onclick={() => webBarAction('always')}>{t.webBar.always(lang)}</button>
+        <button type="button" onclick={() => webBarAction('never-lang')}>{t.webBar.neverLang(lang)}</button>
+        <button type="button" onclick={() => webBarAction('never-site')}>{t.webBar.neverSite}</button>
+      {:else if store.webBar.state === 'translating'}
+        <span class="webbar-text">{t.webBar.translating}</span>
+        <button type="button" onclick={() => webBarAction('restore')}>{t.webBar.showOriginal}</button>
+      {:else if store.webBar.state === 'translated'}
+        <span class="webbar-text">{t.webBar.translated}</span>
+        <button type="button" onclick={() => webBarAction('restore')}>{t.webBar.showOriginal}</button>
+        <button type="button" onclick={() => webBarAction('never-site')}>{t.webBar.neverSite}</button>
+      {:else}
+        <span class="webbar-text error">{t.webBar.error}</span>
+        <button type="button" onclick={() => webBarAction('translate')}>{t.webBar.retry}</button>
+      {/if}
+      <span class="spacer"></span>
+      <button type="button" class="webbar-close" title={t.webBar.close} aria-label={t.webBar.close} onclick={() => webBarAction('dismiss')}>×</button>
+    </div>
+  {/if}
+  </div>
+
   <!-- The browse view is a native view laid over this area by the main process. -->
   <main class="content">
     {#if store.panelOpen}
@@ -191,11 +220,47 @@
     height: 100%;
   }
 
-  /* Row heights must match TAB_STRIP_HEIGHT, TOOLBAR_HEIGHT and STATUS_HEIGHT in src/shared/constants.ts. */
+  /* Row heights must match TAB_STRIP_HEIGHT, TOOLBAR_HEIGHT, INFOBAR_HEIGHT and STATUS_HEIGHT in src/shared/constants.ts. */
   .shell {
     display: grid;
-    grid-template-rows: 34px 48px 1fr 24px;
+    grid-template-rows: 34px 48px auto 1fr 24px;
     height: 100%;
+  }
+
+  .webbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 10px;
+    background: #24324a;
+    color: #dfe1e5;
+    border-bottom: 1px solid #34486b;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .webbar button {
+    height: 26px;
+  }
+  .webbar .primary {
+    background: #3d6fd8;
+  }
+  .webbar .primary:hover {
+    background: #4a7de6;
+  }
+  .webbar-icon {
+    font-weight: 700;
+    color: #8fb4ff;
+  }
+  .webbar-text.error {
+    color: #ff8f88;
+  }
+  .webbar-close {
+    min-width: 26px;
+    padding: 0;
+    background: transparent;
+    font-size: 16px;
   }
 
   .tabstrip {

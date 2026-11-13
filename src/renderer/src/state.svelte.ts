@@ -13,6 +13,7 @@ import type {
   ServerRole,
   ServerStatus,
   TabsState,
+  WebTextBar,
 } from '../../shared/ipc/contract'
 import { label, zhCN } from './i18n/zh-CN'
 
@@ -21,6 +22,8 @@ export type SettingsTab = 'models' | 'servers' | 'advanced' | 'licenses'
 export interface ShellStore {
   browse: BrowseState
   tabs: TabsState
+  /** The Google translate bar of the active tab. */
+  webBar: WebTextBar
   config: Config | null
   llama: Record<ServerRole, ServerStatus | null>
   /** Images of the current page: done / total (R5.7). */
@@ -43,6 +46,7 @@ export interface ShellStore {
 export const store: ShellStore = $state({
   browse: { url: '', title: '', canGoBack: false, canGoForward: false, loading: false },
   tabs: { tabs: [], activeId: null },
+  webBar: { tabId: null, state: 'hidden', lang: '', host: '' },
   config: null,
   llama: { ocr: null, translate: null },
   progress: { total: 0, done: 0, failed: 0, active: 0 },
@@ -78,6 +82,9 @@ export function initStore(onFocusAddress: () => void = () => {}): () => void {
       store.tabs = state
     }),
     api.on('shell:focus-address', () => onFocusAddress()),
+    api.on('webtext:bar', (bar) => {
+      store.webBar = bar
+    }),
     api.on('config:changed', (config) => {
       store.config = config
     }),
@@ -101,6 +108,9 @@ export function initStore(onFocusAddress: () => void = () => {}): () => void {
   })
   void api.invoke('tabs:get').then((result) => {
     if (result.ok) store.tabs = result.value
+  })
+  void api.invoke('webtext:bar').then((result) => {
+    if (result.ok) store.webBar = result.value
   })
   void api.invoke('llama:status').then((result) => {
     if (!result.ok) return
@@ -143,6 +153,12 @@ export function closeTab(id: number): void {
 
 export function activateTab(id: number): void {
   void window.rawreader.invoke('tabs:activate', { id })
+}
+
+export function webBarAction(action: 'translate' | 'restore' | 'always' | 'never-lang' | 'never-site' | 'dismiss'): void {
+  const tabId = store.webBar.tabId
+  if (tabId === null) return
+  void window.rawreader.invoke('webtext:bar-action', { tabId, action })
 }
 
 export function openLogs(): void {

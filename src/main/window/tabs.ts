@@ -35,6 +35,8 @@ export interface TabManagerOptions {
   isPanelOpen: () => boolean
   /** True once the app is quitting: closed tabs are not replaced by an empty one. */
   isQuitting: () => boolean
+  /** Extra height above the page (the translate bar). */
+  getExtraTop: () => number
 }
 
 export interface TabManager {
@@ -50,6 +52,8 @@ export interface TabManager {
   state(): TabsState
   /** Shows or hides the active view (settings panel). */
   setVisible(visible: boolean): void
+  /** Re-applies the page bounds (the translate bar appeared or went away). */
+  relayout(): void
   shortcut(shortcut: TabShortcut): void
   destroyAll(): void
 }
@@ -162,6 +166,7 @@ export function createTabManager(options: TabManagerOptions): TabManager {
       onNavigated: () => pushTabs(),
       onWindowOpen: handleWindowOpen,
       onShortcut: (s) => manager.shortcut(s),
+      getExtraTop: options.getExtraTop,
     })
     id = view.webContentsId
     view.webContents.on('did-create-window', (popup) => guardPopup(popup.webContents))
@@ -230,6 +235,9 @@ export function createTabManager(options: TabManagerOptions): TabManager {
     state: tabsState,
     setVisible() {
       applyVisibility()
+    },
+    relayout() {
+      for (const view of views.values()) view.updateBounds()
     },
     shortcut(shortcut) {
       switch (shortcut) {

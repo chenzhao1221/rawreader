@@ -5,7 +5,15 @@ describe('ConfigSchema defaults', () => {
   it('matches the documented defaults', () => {
     expect(ConfigSchema.parse({})).toEqual({
       schemaVersion: 1,
-      ui: { autoTranslate: false, overlayVisible: true, bubblesOnly: false, lastUrl: null, openTabs: { urls: [], active: 0 }, trayHintShown: false },
+      ui: {
+        autoTranslate: false,
+        overlayVisible: true,
+        bubblesOnly: false,
+        lastUrl: null,
+        openTabs: { urls: [], active: 0 },
+        webTranslate: { alwaysLangs: [], neverLangs: [], neverSites: [] },
+        trayHintShown: false,
+      },
       llama: {
         build: 'b12318',
         backend: 'vulkan',
@@ -87,6 +95,10 @@ describe('ConfigPatchSchema', () => {
   it('accepts the bubblesOnly toggle in a patch and rejects non-booleans', () => {
     expect(ConfigPatchSchema.parse({ ui: { bubblesOnly: true } })).toEqual({ ui: { bubblesOnly: true } })
     expect(ConfigPatchSchema.safeParse({ ui: { bubblesOnly: 'yes' } }).success).toBe(false)
+  })
+
+  it('keeps translate-bar preferences main-process only: the shell cannot patch them', () => {
+    expect(ConfigPatchSchema.safeParse({ ui: { webTranslate: { neverSites: ['example.com'] } } }).success).toBe(false)
   })
 
   it('rejects invalid values', () => {

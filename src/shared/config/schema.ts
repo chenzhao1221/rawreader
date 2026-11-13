@@ -89,6 +89,14 @@ export const ConfigSchema = z.object({
       openTabs: z
         .object({ urls: z.array(z.string()).max(100).default([]), active: z.number().int().min(0).default(0) })
         .prefault({}),
+      /** Choices made on the Google translate bar; main-process only. */
+      webTranslate: z
+        .object({
+          alwaysLangs: z.array(z.string().max(8)).max(200).default([]),
+          neverLangs: z.array(z.string().max(8)).max(200).default([]),
+          neverSites: z.array(z.string().max(253)).max(2000).default([]),
+        })
+        .prefault({}),
       /** The "still running in the tray" balloon was shown once; main-process only. */
       trayHintShown: f.bool.default(false),
     })
