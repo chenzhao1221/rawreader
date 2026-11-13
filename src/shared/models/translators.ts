@@ -26,14 +26,15 @@ export interface TranslatorOption {
   note: string
   license: string
   /**
-   * Video memory the translation server needs with this file, in bytes: measured for Index-2B
-   * (1.47 GB with a 1.31 GB file, ctx 8192), the others estimated the same way (file + 12% + 0.2 GB).
+   * Video memory the translation server needs with this file, in bytes. Measured on an RX 7700 XT
+   * (Vulkan, ctx 8192, --cache-ram 256): Index-2B 1.47 GB, HY-MT1.5 1.8B 1.68 GB. The others are
+   * estimated on the safe side from those two (file × 1.25 + 0.4 GB).
    */
   vramBytes: number
 }
 
 const GB = 1024 ** 3
-const vramFor = (size: number): number => Math.round(size * 1.12 + 0.2 * GB)
+const vramFor = (size: number): number => Math.round(size * 1.25 + 0.4 * GB)
 
 export const TRANSLATOR_OPTIONS: readonly TranslatorOption[] = [
   {
@@ -56,9 +57,9 @@ export const TRANSLATOR_OPTIONS: readonly TranslatorOption[] = [
     huggingface: { repo: 'tencent/HY-MT1.5-1.8B-GGUF', revision: '265b2e615a7dc9b06c435dc878829ad99a512ba2' },
     modelscope: { repo: 'Tencent-Hunyuan/HY-MT1.5-1.8B-GGUF', revision: 'master' },
     displayName: '腾讯混元 HY-MT1.5 1.8B',
-    note: '腾讯的翻译专用模型，比默认的略小，支持 33 种语言。',
+    note: '腾讯的翻译专用模型，比默认的略小，支持 33 种语言。实测速度和默认的差不多，译文偏书面一点。',
     license: 'Tencent HY Community License（不适用于欧盟、英国、韩国）',
-    vramBytes: vramFor(1_133_080_512),
+    vramBytes: 1_799_356_416, // measured 1716 MiB
   },
   {
     id: 'qwen3-4b',
