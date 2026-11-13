@@ -46,6 +46,12 @@ function serverShape(d: { port: number; ctxSize: number; alias: string; flashAtt
     ctxSize: f.ctxSize.default(d.ctxSize),
     nGpuLayers: f.nGpuLayers.default(99),
     parallel: f.parallel.default(1),
+    /**
+     * `--cache-ram` in MiB: llama-server keeps old prompts in RAM to reuse them. Its own default is
+     * 8192, which grew the translation server to ~10 GB, because every bubble is a new prompt.
+     * 0 turns the cache off, -1 means no limit.
+     */
+    cacheRamMb: z.number().int().min(-1).default(256),
     // 'auto' omits the flag so llama-server picks its own default.
     flashAttn: f.flashAttn.default(d.flashAttn),
     alias: f.alias.default(d.alias),

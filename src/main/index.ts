@@ -289,6 +289,35 @@ async function bootstrap(): Promise<void> {
   // Verify the model files in the background (sizes now, sha256 once per file).
   modelService.refresh()
 
+  // Memory trace: one line per minute, so a growing process shows up in main.log.
+  const MEMORY_WARN_MB = 3072
+  const memoryTimer = setInterval(() => {
+    const tabPids = new Map<number, string>()
+    for (const view of tabManager.all()) {
+      const wc = view.webContents
+      if (wc.isDestroyed()) continue
+      let host = ''
+      try {
+        host = new URL(wc.getURL()).host
+      } catch {
+        host = '(blank)'
+      }
+      tabPids.set(wc.getOSProcessId(), host)
+    }
+    const parts: string[] = []
+    let totalMb = 0
+    for (const metric of app.getAppMetrics()) {
+      // privateBytes is reported in KB.
+      const mb = Math.round((metric.memory.privateBytes ?? metric.memory.workingSetSize) / 1024)
+      totalMb += mb
+      const label = tabPids.get(metric.pid) ?? metric.name ?? metric.type
+      parts.push(`${metric.type}:${label}=${mb}MB`)
+      if (mb >= MEMORY_WARN_MB) log.warn(`High memory: ${metric.type} ${label} pid ${metric.pid} uses ${mb} MB`)
+    }
+    log.info(`memory total=${totalMb}MB tabs=${tabPids.size} ${parts.join(' ')}`)
+  }, 60_000)
+  memoryTimer.unref()
+
   // Servers start in the background; the window never waits for them.
   void llama
     .cleanOrphans()

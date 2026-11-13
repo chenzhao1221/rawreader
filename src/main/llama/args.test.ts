@@ -16,6 +16,7 @@ describe('buildOcrArgs', () => {
       '--ctx-size', '4096',
       '-np', '1',
       '-ngl', '99',
+      '--cache-ram', '256',
       '--alias', 'PaddleOCR-VL-1.5',
     ])
   })
@@ -27,6 +28,11 @@ describe('buildOcrArgs', () => {
     expect(on[on.indexOf('--flash-attn') + 1]).toBe('on')
     const off = buildOcrArgs({ ...config.llama.ocr, flashAttn: 'off' }, ocrPaths)
     expect(off[off.indexOf('--flash-attn') + 1]).toBe('off')
+  })
+
+  it('passes --cache-ram 0 to turn the prompt cache off', () => {
+    const args = buildOcrArgs({ ...config.llama.ocr, cacheRamMb: 0 }, ocrPaths)
+    expect(args[args.indexOf('--cache-ram') + 1]).toBe('0')
   })
 
   it('uses the effective port override and appends extra args last', () => {
@@ -56,6 +62,7 @@ describe('buildTranslateArgs', () => {
       '-ngl', '99',
       '--ctx-size', '8192',
       '-np', '1',
+      '--cache-ram', '256',
       '--flash-attn', 'on',
       '--reasoning', 'off',
       '--alias', 'Index-Translate-2B',
