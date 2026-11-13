@@ -45,7 +45,11 @@ export interface PipelineDeps {
   translator: {
     translate(request: TranslateRequest): Promise<TranslateResult>
     /** Optional: all bubbles of an image in one request; null entries are translated one by one. */
-    translateBatch?(sources: readonly string[], signal?: AbortSignal): Promise<(string | null)[]>
+    translateBatch?(
+      sources: readonly string[],
+      signal?: AbortSignal,
+      previous?: readonly { source: string; translation: string }[],
+    ): Promise<(string | null)[]>
   }
   /** Gemini one-stop mode: reads and translates crops itself (used when `settings().engine` is 'gemini'). */
   vision?: {
@@ -92,7 +96,16 @@ interface DocState {
   done: number
   failed: number
   active: number
+  /**
+   * Last lines (source and translation) of images finished on this page, by document order. The
+   * next image's batch prompt gets the previous image's lines, so a conversation running across
+   * two images stays consistent.
+   */
+  tails: Map<number, { source: string; translation: string }[]>
 }
+
+/** How many lines of the previous image go into the next image's prompt. */
+const TAIL_LINES = 3
 
 type Stage = 'capture' | 'detect' | 'ocr' | 'translate'
 
@@ -161,7 +174,7 @@ export class Pipeline {
     this.doc =
       docId === null
         ? null
-        : { id: docId, pageUrl, controller: new AbortController(), seen: new Set(), total: 0, done: 0, failed: 0, active: 0 }
+        : { id: docId, pageUrl, controller: new AbortController(), seen: new Set(), total: 0, done: 0, failed: 0, active: 0, tails: new Map() }
     this.emitProgress()
   }
 
@@ -242,6 +255,7 @@ export class Pipeline {
             `capture=${Math.round(timings.captureMs)}ms detect=0ms ocr=0ms translate=0ms ` +
             `total=${Math.round(performance.now() - started)}ms source=${captured.image.source} cache=memory`,
         )
+        this.recordTail(doc, image.order, claim.result)
         this.settle(doc, [subscriber], claim.result, null)
         return
       }
@@ -267,7 +281,7 @@ export class Pipeline {
             captureSource: captured.image.source,
           }
         } else {
-          result = await this.process(doc, captured.image, image.distance, timings)
+          result = await this.process(doc, captured.image, image.distance, timings, image.order)
           this.storeCache(hash, result)
         }
       } catch (error) {
@@ -276,6 +290,7 @@ export class Pipeline {
         this.settleCompletion(doc, completion, subscriber, failure)
         return
       }
+      this.recordTail(doc, image.order, result)
       const completion = this.registry.markDone(hash, claim.token, result)
       this.settleCompletion(doc, completion, subscriber, null, result)
       this.deps.logger.info(
@@ -352,6 +367,7 @@ export class Pipeline {
     image: { bytes: Uint8Array; hash: string; mime: string; source: 'cdp' | 'fetch' | 'data-url' },
     distance: number,
     timings: StageTimings,
+    order?: number,
   ): Promise<ImageResult> {
     const settings = this.deps.settings()
 
@@ -404,7 +420,7 @@ export class Pipeline {
       watermark = texts.map((t) => !t.failed && looksLikeWatermark(t.text))
       outcomes = answers.map((a) => ({ translation: a?.translation ?? '', failed: a !== null && a.source !== '' && a.translation === '', echo: false }))
     } else {
-      ;({ texts, watermark, outcomes } = await this.readAndTranslateLocally(doc, work, distance, timings))
+      ;({ texts, watermark, outcomes } = await this.readAndTranslateLocally(doc, work, distance, timings, this.previousTail(doc, order)))
     }
 
     const workResults: UnitResult[] = work.map((unit, index) => {
@@ -438,6 +454,7 @@ export class Pipeline {
     work: readonly DetectOk['units'][number][],
     distance: number,
     timings: StageTimings,
+    previous: readonly { source: string; translation: string }[] = [],
   ): Promise<{
     texts: { text: string; failed: boolean }[]
     watermark: boolean[]
@@ -466,7 +483,7 @@ export class Pipeline {
     const batch = this.deps.translator.translateBatch
     const batched: readonly (string | null)[] =
       batch && filled >= 2
-        ? await this.stage(doc, 'translate', distance, () => batch(sources, doc.controller.signal))
+        ? await this.stage(doc, 'translate', distance, () => batch(sources, doc.controller.signal, previous))
         : []
     const outcomes = await Promise.all(
       work.map(async (_unit, index): Promise<{ translation: string; failed: boolean; echo: boolean }> => {
@@ -483,6 +500,24 @@ export class Pipeline {
     )
     timings.translateMs = performance.now() - translateStart
     return { texts, watermark, outcomes }
+  }
+
+  /** Remembers the last translated lines of an image at document position `order`. */
+  private recordTail(doc: DocState, order: number | undefined, result: ImageResult): void {
+    if (order === undefined || this.doc !== doc) return
+    const lines = result.units
+      .filter((unit) => unit.status === 'ok' && unit.translation.trim().length > 0)
+      .slice(-TAIL_LINES)
+      .map((unit) => ({ source: unit.ocrText.trim(), translation: unit.translation.trim() }))
+    if (lines.length > 0) doc.tails.set(order, lines)
+  }
+
+  /** The closest finished image above `order` (none when it is not done yet: no waiting). */
+  private previousTail(doc: DocState, order: number | undefined): { source: string; translation: string }[] {
+    if (order === undefined) return []
+    let best = -1
+    for (const key of doc.tails.keys()) if (key < order && key > best) best = key
+    return best >= 0 ? (doc.tails.get(best) ?? []) : []
   }
 
   /**

@@ -320,6 +320,14 @@ export class ScrollQueue {
     this.reported.set(img, url)
     if (!this.guard.tryEnqueue(elId, url)) return
 
-    this.batcher.add({ elId, url, naturalW: img.naturalWidth, naturalH: img.naturalHeight, distance })
+    const order = Array.prototype.indexOf.call(this.doc.images, img) as number
+    this.batcher.add({
+      elId,
+      url,
+      naturalW: img.naturalWidth,
+      naturalH: img.naturalHeight,
+      distance,
+      ...(order >= 0 ? { order } : {}),
+    })
   }
 }

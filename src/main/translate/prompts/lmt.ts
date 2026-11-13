@@ -116,13 +116,24 @@ export const BATCH_MAX_ITEMS = 20
  * exchange and keeps who-says-what consistent. Line breaks inside a bubble become spaces, because
  * the answer is read back line by line.
  */
-export function buildBatchPrompt(texts: readonly string[], targetLang: string): string {
+export function buildBatchPrompt(
+  texts: readonly string[],
+  targetLang: string,
+  previous: readonly { source: string; translation: string }[] = [],
+): string {
   const tgt = zhLangName(targetLang)
   const rules = isChineseTarget(targetLang) ? ZH_STYLE_RULES : []
   const notes = rules.length > 0 ? `\n要求：\n${rules.map((rule) => `- ${rule}`).join('\n')}\n` : '\n'
+  // Only the previous image's Chinese lines, before the instruction: tested on Index-Translate-2B, a
+  // labelled "source -> translation" block or a parenthesised note after the instruction gets echoed or
+  // makes the model invent lines.
+  const before =
+    previous.length > 0
+      ? `前文：${previous.map((p) => truncateUtf8(p.translation.replace(/\s+/g, ' '), CONTEXT_LIMITS.unitBytes)).join('')}\n\n`
+      : ''
   const lines = texts.map((text, i) => `${i + 1}. ${text.replace(/\s*\n\s*/g, ' ')}`).join('\n')
   return (
-    `请将以下漫画对白翻译成${tgt}。这些是同一页的对白，按阅读顺序排列，每行一句，行首是编号。` +
+    `${before}请将以下漫画对白翻译成${tgt}${before ? '，接着上面的前文' : ''}。这些是同一页的对白，按阅读顺序排列，每行一句，行首是编号。` +
     `按同样的编号逐行输出译文，行数必须相同，不要合并或拆分，不要解释。${notes}\n${lines}`
   )
 }
@@ -132,7 +143,7 @@ export function buildBatchPrompt(texts: readonly string[], targetLang: string): 
  * or when the model echoed the instructions: the caller then translates bubble by bubble.
  */
 export function parseBatchOutput(output: string, count: number): string[] | null {
-  if (/请将以下|行数必须相同|按同样的编号|要求：/.test(output)) return null
+  if (/请将以下|行数必须相同|按同样的编号|要求：|前文：/.test(output)) return null
   const found = new Map<number, string>()
   for (const line of output.split(/\r?\n/)) {
     const match = /^\s*(\d{1,3})\s*[.、．:：)）]\s*(.*)$/.exec(line)

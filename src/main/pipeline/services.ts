@@ -90,10 +90,10 @@ export function createModelClients(
         return clientFor(getConfig()).translate(request)
       },
       // Batch mode needs the Index prompt rules; the baseline variant stays one bubble per request.
-      translateBatch(sources, signal) {
+      translateBatch(sources, signal, previous) {
         const config = getConfig()
         if (!config.translate.batch || config.translate.promptVariant !== 'lmt') return Promise.resolve(sources.map(() => null))
-        return clientFor(config).translateBatch(sources, signal)
+        return clientFor(config).translateBatch(sources, signal, previous)
       },
     },
     vision: gemini,

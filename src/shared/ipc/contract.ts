@@ -143,6 +143,8 @@ export const PageImageSchema = z.object({
   naturalH: z.number().int().min(0).max(1_000_000),
   /** CSS pixels between the image and the viewport; 0 when visible. Smaller runs first. */
   distance: z.number().min(0).max(10_000_000),
+  /** Position among the page's images (document order), for the previous image's context. */
+  order: z.number().int().min(0).max(1_000_000).optional(),
 })
 export type PageImage = z.infer<typeof PageImageSchema>
 

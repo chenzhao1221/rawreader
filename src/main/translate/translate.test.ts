@@ -295,3 +295,15 @@ describe('batch translation format', () => {
     expect(parseBatchOutput('请将以下漫画对白翻译成简体中文\n1. 好\n2. 行', 2)).toBeNull()
   })
 })
+
+describe('previous image context in the batch prompt', () => {
+  it('puts only the previous Chinese lines in front of the instruction', async () => {
+    const { buildBatchPrompt, parseBatchOutput } = await import('./prompts')
+    const prompt = buildBatchPrompt(['그래.'], 'zh-Hans', [{ source: '당연하지.', translation: '当然了。' }])
+    expect(prompt.startsWith('前文：当然了。\n\n请将以下漫画对白翻译成')).toBe(true)
+    expect(prompt).not.toContain('당연하지')
+    expect(buildBatchPrompt(['그래.'], 'zh-Hans')).not.toContain('前文')
+    // An answer that repeats the context block is not used.
+    expect(parseBatchOutput('前文：当然了。\n1. 好', 1)).toBeNull()
+  })
+})

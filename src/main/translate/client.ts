@@ -93,7 +93,11 @@ export class TranslateClient {
    * translation, '' for an empty source, or null where the batch answer could not be used (the caller
    * then translates that bubble on its own). Transport errors also give nulls, never a throw.
    */
-  async translateBatch(rawSources: readonly string[], signal?: AbortSignal): Promise<(string | null)[]> {
+  async translateBatch(
+    rawSources: readonly string[],
+    signal?: AbortSignal,
+    previous: readonly { source: string; translation: string }[] = [],
+  ): Promise<(string | null)[]> {
     const sources = rawSources.map((s) => normalizeOcrForPrompt(s ?? ''))
     const out: (string | null)[] = sources.map((s) => (s.length === 0 ? '' : null))
     const indexes = sources.flatMap((s, i) => (s.length > 0 ? [i] : []))
@@ -103,7 +107,7 @@ export class TranslateClient {
       // A single bubble gains nothing from the batch format.
       if (texts.length < 2) continue
       const answer = await this.ask(
-        buildBatchPrompt(texts, this.options.targetLang),
+        buildBatchPrompt(texts, this.options.targetLang, start === 0 ? previous : []),
         texts.join(''),
         signal,
         maxTokensForBatch(texts.map((t) => t.length)),
