@@ -261,3 +261,15 @@ describe('TranslateClient', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('misread hand-lettered Hangul', () => {
+  it('puts "Lh" back to 내 inside Korean text', () => {
+    expect(normalizeOcrForPrompt('Lh, Lh가 직접?')).toBe('내, 내가 직접?')
+    expect(normalizeOcrForPrompt('LH가 할게')).toBe('내가 할게')
+  })
+
+  it('leaves Latin text without Hangul and longer words alone', () => {
+    expect(normalizeOcrForPrompt('Lh is a code')).toBe('Lh is a code')
+    expect(normalizeOcrForPrompt('Lhasa 여행')).toBe('Lhasa 여행')
+  })
+})

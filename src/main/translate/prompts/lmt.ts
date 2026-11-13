@@ -12,7 +12,7 @@
 import { CONTEXT_LIMITS, truncateUtf8, utf8ByteLength } from './limits'
 
 /** Bump when any prompt text below changes. Part of the cache key (design section 12). */
-export const LMT_PROMPT_VERSION = 'lmt-2'
+export const LMT_PROMPT_VERSION = 'lmt-3'
 
 /**
  * Style constraints for Chinese output, condensed from LMT `src/lib/prompts.ts` ("STYLE RULES FOR CHINESE OUTPUT"):
@@ -23,6 +23,7 @@ export const ZH_STYLE_RULES: readonly string[] = [
   '按人物关系翻译敬语和称呼；网络流行语和俚语按意思翻译，不要按字面直译。',
   '保留骂人、吐槽、惊叹的语气强弱；拟声词译成中文拟声词。',
   '原文来自 OCR，可能有错字或断词；先按上下文猜出原句再翻译，不要把读不通的字母音译成人名。',
+  '韩文原文里夹着的两三个拉丁字母（如 Lh、LH），多半是手写韩文被认错了，按上下文当成韩文理解，不要原样保留。',
 ]
 
 function isChineseTarget(lang: string): boolean {

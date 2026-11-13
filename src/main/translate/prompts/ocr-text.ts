@@ -1,7 +1,7 @@
 // Portions ported from libre-manga-translator src/lib/ocr-text.ts @ 1ddddc761ff18e6155a071ad3a3f603a836d7136,
 // AGPL-3.0-or-later, (C) 2026 Libre Manga Translator; modified by RawReader.
 //
-// RawReader changes: none in behaviour; typed and reformatted.
+// RawReader changes: typed and reformatted; misread hand-lettered Hangul ("Lh" for "내") is put back.
 
 /**
  * Cleans OCR text before it goes into a translation prompt.
@@ -14,9 +14,28 @@
  */
 const LATIN_LETTER = /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u00FF\u0100-\u017E\u0180-\u024F]/g
 
+const HANGUL = /[\uAC00-\uD7A3\u1100-\u11FF\u3130-\u318F]/
+
+/**
+ * Hand-lettered Hangul that the OCR model reads as Latin letters ("내" -> "Lh": ㄴ looks like L, ㅐ like h).
+ * Only whole letter groups are replaced, and only in text that also contains Hangul, so real English is untouched.
+ * Add pairs here as new cases turn up.
+ */
+const HANGUL_LOOKALIKES: ReadonlyArray<readonly [RegExp, string]> = [[/(?<![A-Za-z])[Ll][Hh](?![A-Za-z])/g, '내']]
+
+/** Puts misread Hangul back. Exported for tests. */
+export function fixHangulLookalikes(text: string): string {
+  if (!HANGUL.test(text)) return text
+  let out = text
+  for (const [pattern, hangul] of HANGUL_LOOKALIKES) out = out.replace(pattern, hangul)
+  return out
+}
+
 export function normalizeOcrForPrompt(raw: string): string {
   let text = raw.replace(/\s+/g, ' ').trim()
   if (!text) return text
+
+  text = fixHangulLookalikes(text)
 
   // Re-join words hyphenated across a line break: "RESIS- TIRME" -> "RESISTIRME".
   text = text.replace(/([A-Za-z\u00C0-\u00FF])[-\u2010\u2011]\s+([A-Za-z\u00C0-\u00FF])/g, '$1$2')
