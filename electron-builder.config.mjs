@@ -28,8 +28,26 @@ export default {
     '**/node_modules/better-sqlite3/**',
   ],
   // GGUF models are never bundled (R15.2). The Vulkan build comes from scripts/fetch-resources.mjs.
+  // Only the llama-server runtime is shipped: the CLI, bench, quantize and RPC tools in the release zip are
+  // left out (102 MB -> 85 MB; checked on 2026-11-13 by loading a model and translating with this set).
   extraResources: [
-    { from: 'resources/llama/vulkan', to: 'llama/vulkan', filter: ['**/*', '!.rawreader-build.json'] },
+    {
+      from: 'resources/llama/vulkan',
+      to: 'llama/vulkan',
+      filter: [
+        'llama-server.exe',
+        'llama-server-impl.dll',
+        'llama.dll',
+        'llama-common.dll',
+        'mtmd.dll',
+        'ggml.dll',
+        'ggml-base.dll',
+        'ggml-vulkan.dll',
+        'ggml-cpu-*.dll',
+        'libomp.dll',
+        'LICENSE-LLVM-OpenMP',
+      ],
+    },
     { from: 'resources/detector', to: 'detector' },
     { from: 'resources/icons', to: 'icons', filter: ['*.png'] },
     { from: 'resources/fonts/NotoSansSC-Bold-subset.woff', to: 'fonts/NotoSansSC-Bold-subset.woff' },
