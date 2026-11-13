@@ -71,3 +71,12 @@ describe('dropOversizedBoxes', () => {
     expect(units[0]).toMatchObject({ kind: 'free', bubbleOnly: false })
   })
 })
+
+describe('text boxes covering half the image', () => {
+  it('drops a header logo read as one text box (67%) but keeps a bubble of the same size', () => {
+    const logo = box(0, 0, 1016, 275) // 1016x410 image, 67% of it
+    const out = dropOversizedBoxes({ textBoxes: [logo, box(10, 10, 100, 60)], bubbleBoxes: [logo] }, 1016, 410)
+    expect(out.textBoxes).toEqual([box(10, 10, 100, 60)])
+    expect(out.bubbleBoxes).toEqual([logo])
+  })
+})
