@@ -27,6 +27,8 @@ export default defineConfig({
         input: {
           shell: resolve(root, 'src/preload/shell/index.ts'),
           browse: resolve(root, 'src/preload/browse/index.ts'),
+          // Development-only driver of the headless overlay smoke; excluded from the installer.
+          'overlay-smoke': resolve(root, 'src/preload/overlay-smoke/index.ts'),
         },
         output: {
           format: 'cjs',

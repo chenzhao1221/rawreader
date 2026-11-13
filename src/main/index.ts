@@ -1,14 +1,29 @@
 import { existsSync } from 'node:fs'
+import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, ipcMain, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
 import type { EventChannel } from '../shared/ipc/channels'
 import type { EventPayload } from '../shared/ipc/contract'
+import { createIdentityProvider } from './cache/identity'
+import { createPipelineCache } from './cache/pipeline-cache'
+import { openResultCache } from './cache/store'
+import type { ResultCache } from './cache/store'
 import { getConfig, initConfig, onConfigChanged, updateConfig } from './config/store'
 import { registerSkeletonHandlers } from './ipc/handlers'
 import { createIpcRegistrar } from './ipc/register'
+import { resolveBinDir } from './llama/backend'
 import { LlamaManager, llamaPaths } from './llama/manager'
+import { loadLicenses, licenseSources } from './licenses'
+import { hasHeadlessSmokeFlag, parseHeadlessSmokeArgs } from './headless/args'
+import { runHeadlessSmoke } from './headless/run'
 import { createLogger } from './log/log'
+import { CUDA_BUILD, CudaInstaller } from './models/cuda'
+import { hashFile } from './models/download'
+import { createDialogPickers, netFetch } from './models/edge'
+import { ModelService } from './models/service'
+import { FileVerifier, createJsonMemoStore } from './models/verify'
+import { createFontProvider } from './overlay/font'
 import { initLogging, logsDirFor } from './log/setup'
 import { createPipelineWiring } from './pipeline/wiring'
 import type { PipelineWiring } from './pipeline/wiring'
@@ -22,18 +37,33 @@ import type { ShellWindow } from './window/shell-window'
 
 const log = createLogger('main')
 
-// The userData path must be set before `ready` (R1.2). Dev builds get a "-dev" suffix.
-app.setPath(
-  'userData',
-  join(app.getPath('appData'), appIdentity.userDataDirName + (app.isPackaged ? '' : '-dev')),
-)
-app.setName(appIdentity.productName)
-initLogging(logsDirFor(app.getPath('userData')))
+// Headless runs (`--headless-smoke=<kind>`, development builds only) never reach any window code.
+// This check must stay before `createShellWindow` and before the single-instance lock.
+const headlessFlag = hasHeadlessSmokeFlag(process.argv)
+const headlessArgs = headlessFlag && !app.isPackaged ? parseHeadlessSmokeArgs(process.argv) : null
+
+if (headlessFlag && headlessArgs === null) {
+  log.error('Unknown or disallowed --headless-smoke flag; exiting without opening a window')
+  app.exit(2)
+} else if (headlessArgs) {
+  runHeadlessSmoke(headlessArgs)
+} else {
+  // The userData path must be set before `ready` (R1.2). Dev builds get a "-dev" suffix.
+  app.setPath(
+    'userData',
+    join(app.getPath('appData'), appIdentity.userDataDirName + (app.isPackaged ? '' : '-dev')),
+  )
+  app.setName(appIdentity.productName)
+  initLogging(logsDirFor(app.getPath('userData')))
+}
 
 let shell: ShellWindow | null = null
 let browse: BrowseView | null = null
 let manager: LlamaManager | null = null
 let wiring: PipelineWiring | null = null
+let openCache: ResultCache | null = null
+let models: ModelService | null = null
+let cuda: CudaInstaller | null = null
 let disposeIpc: (() => void) | null = null
 
 function sendToShell<E extends EventChannel>(channel: E, payload: EventPayload<E>): void {
@@ -83,6 +113,12 @@ async function bootstrap(): Promise<void> {
   manager = llama
 
   const modelEnv = { userDataDir, resourcesDir, exists: existsSync }
+  const cacheLogger = createLogger('cache')
+  const resultCache = openResultCache(join(userDataDir, 'cache', 'cache.db'), {
+    getMaxBytes: () => getConfig().cache.maxBytes,
+    logger: cacheLogger,
+  })
+  openCache = resultCache
   const pipelineWiring = createPipelineWiring({
     getConfig,
     getServerStatus: (role) => llama.getStatus(role),
@@ -95,9 +131,50 @@ async function bootstrap(): Promise<void> {
       const target = browseView.webContents
       if (!target.isDestroyed()) target.send('page:config', config)
     },
+    sendOverlay: (payload) => {
+      const target = browseView.webContents
+      if (!target.isDestroyed()) target.send('overlay:result', payload)
+    },
+    ...(resultCache
+      ? { cache: createPipelineCache({ cache: resultCache, getIdentity: createIdentityProvider(getConfig, modelEnv), logger: cacheLogger }) }
+      : {}),
     logger: createLogger('pipeline'),
   })
   wiring = pipelineWiring
+  const getOverlayFont = createFontProvider(resourcesDir, (path) => readFile(path))
+
+  const modelService = new ModelService({
+    getConfig,
+    updateConfig,
+    env: modelEnv,
+    fetch: netFetch,
+    pickers: createDialogPickers(() => (shellWindow.win.isDestroyed() ? null : shellWindow.win)),
+    verifier: new FileVerifier({ memo: createJsonMemoStore(join(userDataDir, 'models-verified.json')), hash: hashFile }),
+    listDir: (dir) => readdir(dir).catch(() => []),
+    onChange: (overview) => sendToShell('models:changed', overview),
+    // Files arrived: servers that reported MODEL_MISSING start without a restart of the app.
+    onModelsReady: () => void llama.startMissing(),
+    logger: createLogger('models'),
+  })
+  models = modelService
+
+  const cudaInstaller = new CudaInstaller({
+    getTargetDir: () =>
+      resolveBinDir({ ...getConfig().llama, backend: 'cuda' }, { userDataDir, resourcesDir }) ??
+      join(userDataDir, 'llama', `cuda-${CUDA_BUILD}`),
+    getDownloadDir: () => join(userDataDir, 'llama', 'downloads'),
+    getBuild: () => getConfig().llama.build,
+    fetch: netFetch,
+    // Switching the backend restarts both servers with the new binary (R12.3).
+    onInstalled: () => {
+      updateConfig({ llama: { backend: 'cuda' } })
+    },
+    onChange: (status) => sendToShell('cuda:changed', status),
+    logger: createLogger('cuda'),
+  })
+  cuda = cudaInstaller
+
+  const licenseDocs = licenseSources({ isPackaged: app.isPackaged, appPath: app.getAppPath(), resourcesPath: process.resourcesPath })
 
   const registrar = createIpcRegistrar(ipcMain, {
     shell: () => (shellWindow.win.isDestroyed() ? null : shellWindow.webContentsId),
@@ -114,6 +191,23 @@ async function bootstrap(): Promise<void> {
     controlLlama: (role, action) => llama.control(role, action),
     pageHello: (hello) => pipelineWiring.pageHello(hello),
     pageImages: (batch) => pipelineWiring.pageImages(batch),
+    getOverlayFont,
+    getModelsOverview: () => modelService.getOverview(),
+    modelsDownload: (action, role) => modelService.download(action, role),
+    modelsPickFolder: () => modelService.pickFolder(),
+    modelsLocateFolder: () => modelService.locateFolder(),
+    modelsPickFile: (role) => modelService.pickFile(role),
+    modelsUseFile: (role, path) => modelService.useFile(role, path),
+    modelsClearPath: (role) => modelService.clearPath(role),
+    getCudaStatus: () => cudaInstaller.getStatus(),
+    cudaDownload: (action) => (action === 'start' ? cudaInstaller.start() : cudaInstaller.cancel()),
+    getLicenses: () => loadLicenses(licenseDocs, (path) => readFile(path, 'utf8')),
+    getCacheStats: () => resultCache?.stats() ?? { entries: 0, bytes: 0 },
+    clearCache: () => {
+      resultCache?.clear()
+      pipelineWiring.clearResults()
+      return resultCache?.stats() ?? { entries: 0, bytes: 0 }
+    },
     openLogFolder: async () => {
       const error = await electronShell.openPath(logsDir)
       if (error) log.warn(`Cannot open the log folder: ${error}`)
@@ -136,6 +230,9 @@ async function bootstrap(): Promise<void> {
   const lastUrl = getConfig().ui.lastUrl
   if (lastUrl && isHttpUrl(lastUrl)) browseView.navigate(lastUrl)
 
+  // Verify the model files in the background (sizes now, sha256 once per file).
+  modelService.refresh()
+
   // Servers start in the background; the window never waits for them.
   void llama
     .cleanOrphans()
@@ -145,7 +242,9 @@ async function bootstrap(): Promise<void> {
     })
 }
 
-if (!app.requestSingleInstanceLock()) {
+if (headlessFlag) {
+  // Headless run: no lock, no window, no quit handlers (the smoke exits with app.exit).
+} else if (!app.requestSingleInstanceLock()) {
   // Another instance owns the lock; it receives `second-instance` and focuses its window.
   app.quit()
 } else {
@@ -167,7 +266,11 @@ if (!app.requestSingleInstanceLock()) {
     forceExit: () => app.exit(0),
     shutdown: async () => {
       disposeIpc?.()
+      models?.dispose()
+      cuda?.cancel()
       await wiring?.dispose()
+      openCache?.close()
+      openCache = null
       await manager?.stopAll()
       browse?.destroy()
     },
