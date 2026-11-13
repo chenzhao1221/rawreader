@@ -2,6 +2,8 @@
   import { onMount } from 'svelte'
   import type { ModelItem } from '../../../shared/ipc/contract'
   import { localRolesFor, planEngine } from '../../../shared/setup/plan'
+  import { TRANSLATOR_OPTIONS, isDownloadable, translatorOption } from '../../../shared/models/translators'
+  import type { TranslatorId } from '../../../shared/models/translators'
   import type { SetupEngine, SetupVerdict } from '../../../shared/setup/plan'
   import { formatBytes, modelLabel, zhCN as t } from '../i18n/zh-CN'
   import { closeSettings, modelsDownload, saveConfig, store } from '../state.svelte'
@@ -63,6 +65,16 @@
   }
 
   /** Files this engine runs locally, with the ones still missing. */
+  const translator = $derived<TranslatorId>(store.config?.models.translator ?? 'index-2b')
+
+  /** The translator row of the file list follows the choice, so the size and download update at once. */
+  async function pickTranslator(id: TranslatorId): Promise<void> {
+    if (id === translator) return
+    await saveConfig({ models: { translator: id } })
+    const result = await window.rawreader.invoke('models:overview')
+    if (result.ok) store.models = result.value
+  }
+
   const neededItems = $derived.by(() => {
     if (!models) return [] as ModelItem[]
     const roles = new Set<string>(localRolesFor(engine))
@@ -288,8 +300,21 @@
         <p class="muted small">{t.engine.geminiKeyNote}</p>
       {/if}
 
+      {#if engine === 'local'}
+        <h2>{t.models.translatorTitle}</h2>
+        <div class="row">
+          <select value={translator} onchange={(e) => pickTranslator(e.currentTarget.value as TranslatorId)}>
+            {#each TRANSLATOR_OPTIONS.filter(isDownloadable) as option (option.id)}
+              <option value={option.id}>
+                {option.displayName} · {formatBytes(option.size)} · {t.models.vram(formatBytes(option.vramBytes))}
+              </option>
+            {/each}
+          </select>
+        </div>
+        <p class="muted small">{translatorOption(translator).note}</p>
+      {/if}
+
       {#if engine !== 'gemini'}
-        <h2>{t.setup.downloadTitle}</h2>
         {#if missingItems.length === 0}
           <p class="good small">{t.setup.modelsReady}</p>
         {:else}
@@ -310,7 +335,7 @@
             {/each}
           </ul>
           {#if models?.downloadsAllowed && !downloading}
-            <button type="button" class="btn" onclick={() => modelsDownload('start')}>{t.setup.downloadAll}</button>
+            <button type="button" class="btn" onclick={() => missingItems.forEach((item) => void modelsDownload('start', item.role))}>{t.setup.downloadAll}</button>
           {/if}
         {/if}
       {:else}

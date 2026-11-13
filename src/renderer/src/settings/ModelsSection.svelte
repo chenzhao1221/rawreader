@@ -73,7 +73,9 @@
         <label class="translator" class:active={translator === option.id}>
           <input type="radio" name="translator" value={option.id} checked={translator === option.id} onchange={() => pickTranslator(option.id)} />
           <strong>{option.displayName}</strong>
-          <span class="muted">{formatBytes(option.size)} · {t.models.vram(formatBytes(option.vramBytes))}</span>
+          <span class="muted">
+            {#if option.size > 0}{formatBytes(option.size)} · {t.models.vram(formatBytes(option.vramBytes))}{:else}{t.models.customSize}{/if}
+          </span>
           <span class="muted note">{option.note}</span>
           <span class="muted note">{t.models.license}：{option.license}</span>
         </label>
@@ -122,7 +124,7 @@
             <div>{item.fileName}</div>
             <div class="muted small">{item.path ?? item.expectedPath}</div>
           </td>
-          <td>{formatBytes(item.size)}</td>
+          <td>{item.size > 0 ? formatBytes(item.size) : '—'}</td>
           <td>
             {#if item.download && item.download.status !== 'done' && item.download.status !== 'queued'}
               <div class="bar" title="{percent(item)}%"><div class="fill" style="width: {percent(item)}%"></div></div>
@@ -149,7 +151,7 @@
               <button type="button" class="btn" onclick={() => modelsDownload('resume', item.role)}>
                 {item.download?.status === 'error' ? t.models.retry : t.models.resume}
               </button>
-            {:else if item.path === null && models.downloadsAllowed}
+            {:else if item.path === null && models.downloadsAllowed && item.size > 0}
               <button type="button" class="btn" onclick={() => modelsDownload('start', item.role)}>{t.models.downloadOne}</button>
             {/if}
             <button type="button" class="btn" onclick={() => modelsPickFile(item.role)}>{t.models.pickFile}</button>

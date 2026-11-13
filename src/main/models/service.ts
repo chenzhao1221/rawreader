@@ -43,6 +43,9 @@ const toModelCheck = (state: CheckState | undefined): ModelCheck => {
   return state
 }
 
+/** A manifest row without a pinned size and hash (the custom translator): never downloaded or hashed. */
+const isUnpinned = (entry: ManifestEntry): boolean => entry.size === 0 || entry.sha256 === ''
+
 /**
  * Model setup for the shell: what is present, where it came from, whether it verified, and the downloads that
  * fill the gaps (R13). Never starts a download by itself; `models.autoDownload: false` (dev) refuses downloads.
@@ -85,7 +88,7 @@ export class ModelService {
       const resolved = resolveModelPath(entry.role, config, this.deps.env)
       const missing = isMissingModel(resolved)
       const path = missing ? null : resolved
-      const explicit = config.models.paths[entry.role]
+      const explicit = explicitModelPath(entry.role, config)
       const origin: ModelItem['origin'] = missing
         ? 'missing'
         : explicit
@@ -140,6 +143,11 @@ export class ModelService {
       if (!entry || item.path === null) continue
       const path = item.path
       if (this.checks.has(path)) continue
+      if (isUnpinned(entry)) {
+        // Nothing to compare a custom model against.
+        this.checks.set(path, 'ok')
+        continue
+      }
       this.checks.set(path, 'checking')
       void this.deps.verifier.check(entry, path).then((result) => {
         this.checks.set(path, result.status)
@@ -161,7 +169,7 @@ export class ModelService {
       const wanted = this.getOverview().items.filter((item) => item.path === null && (!role || item.role === role))
       const entries = wanted
         .map((item) => this.manifest.find((e) => e.role === item.role))
-        .filter((e): e is ManifestEntry => e !== undefined)
+        .filter((e): e is ManifestEntry => e !== undefined && !isUnpinned(e))
       if (entries.length === 0) return this.result({ code: 'nothing-to-download' })
       this.manager.start(entries)
     }
@@ -232,7 +240,8 @@ export class ModelService {
     if (!entry) return null
     const sizeCheck = await this.deps.verifier.checkSize(entry, path)
     if (sizeCheck.status === 'unreadable') return { code: 'unreadable', role, path }
-    if (sizeCheck.status === 'size-mismatch' && !force) return { code: 'size-mismatch', role, path }
+    // A custom model has no expected size: only "can it be read" counts.
+    if (sizeCheck.status === 'size-mismatch' && !force && !isUnpinned(entry)) return { code: 'size-mismatch', role, path }
     this.deps.updateConfig(explicitPathPatch(role, this.deps.getConfig(), path))
     this.checks.delete(path)
     this.refresh()

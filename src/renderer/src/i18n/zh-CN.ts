@@ -146,6 +146,7 @@ export const zhCN = {
     translatorTitle: '翻译模型',
     translatorNote: '换模型后，翻译服务会自动重启。没下载过的模型会出现在下面的列表里，点“下载”即可。下载过的模型都留着，切回去不用重下。',
     vram: (size: string): string => `约需 ${size} 显存`,
+    customSize: '在下面列表的“翻译模型”一行点“选择文件”，选你的 GGUF 文件。显存大约是文件大小再加两成。',
     license: '许可证',
     bundledNote: '随安装包提供',
     missing: '缺失',

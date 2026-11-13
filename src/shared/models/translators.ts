@@ -5,8 +5,11 @@
  * Shared with the renderer for the settings and setup pages, so no Node imports here.
  */
 
-export const TRANSLATOR_IDS = ['index-2b', 'hy-mt-1.8b', 'qwen3-4b', 'hy-mt-7b'] as const
+export const TRANSLATOR_IDS = ['index-2b', 'hy-mt-1.8b', 'qwen3-4b', 'hy-mt-7b', 'custom'] as const
 export type TranslatorId = (typeof TRANSLATOR_IDS)[number]
+
+/** The "bring your own GGUF" choice: no download, no size or sha256 check. */
+export const CUSTOM_TRANSLATOR: TranslatorId = 'custom'
 
 export interface TranslatorOption {
   id: TranslatorId
@@ -81,7 +84,25 @@ export const TRANSLATOR_OPTIONS: readonly TranslatorOption[] = [
     license: 'Tencent HY Community License（不适用于欧盟、英国、韩国）',
     vramBytes: vramFor(4_624_649_312),
   },
+  {
+    id: 'custom',
+    // Only used as the expected name in the models folder; the user picks any GGUF file.
+    fileName: 'custom-translator.gguf',
+    size: 0,
+    sha256: '',
+    huggingface: { repo: '', revision: '' },
+    modelscope: null,
+    displayName: '自定义模型（自己导入）',
+    note: '选一个 llama.cpp 能读的 GGUF 文件（翻译模型或对话模型都行）。不校验文件，效果和速度看模型本身。',
+    license: '以模型自己的许可证为准',
+    vramBytes: 0,
+  },
 ]
+
+/** True for the options the app can download and verify itself. */
+export function isDownloadable(option: TranslatorOption): boolean {
+  return option.size > 0 && option.sha256.length === 64
+}
 
 export function translatorOption(id: TranslatorId): TranslatorOption {
   return TRANSLATOR_OPTIONS.find((o) => o.id === id) ?? (TRANSLATOR_OPTIONS[0] as TranslatorOption)
