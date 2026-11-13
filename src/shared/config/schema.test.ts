@@ -14,6 +14,7 @@ describe('ConfigSchema defaults', () => {
         openTabs: { urls: [], active: 0 },
         webTranslate: { alwaysLangs: [], neverLangs: [], neverSites: [] },
         trayHintShown: false,
+        setupDone: false,
       },
       llama: {
         build: 'b12318',

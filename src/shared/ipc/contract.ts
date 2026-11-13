@@ -247,6 +247,23 @@ export type ModelNotice = z.infer<typeof ModelNoticeSchema>
 export const ModelsActionResultSchema = z.object({ overview: ModelsOverviewSchema, notice: ModelNoticeSchema.nullable() })
 export type ModelsActionResult = z.infer<typeof ModelsActionResultSchema>
 
+export const GpuInfoSchema = z.object({
+  name: z.string().max(200),
+  /** Dedicated video memory, when Windows reports it. */
+  vramBytes: z.number().min(0).nullable(),
+})
+export type GpuInfo = z.infer<typeof GpuInfoSchema>
+
+/** What the first-run wizard uses to judge each translation engine. */
+export const HardwareInfoSchema = z.object({
+  cpuThreads: z.number().int().min(1),
+  totalRamBytes: z.number().min(0),
+  /** Free space on the volume that holds the models folder; null when unreadable. */
+  freeDiskBytes: z.number().min(0).nullable(),
+  gpus: z.array(GpuInfoSchema).max(8),
+})
+export type HardwareInfo = z.infer<typeof HardwareInfoSchema>
+
 export const CudaStatusSchema = z.object({
   state: z.enum(['absent', 'checking', 'downloading', 'extracting', 'ready', 'error']),
   /** llama-server.exe is present in the CUDA folder. */
@@ -331,6 +348,7 @@ export const ipc = {
   'models:pick-file': def(z.object({ role: ModelRoleSchema }), ModelsActionResultSchema),
   'models:use-file': def(z.object({ role: ModelRoleSchema, path: z.string().min(1).max(4096) }), ModelsActionResultSchema),
   'models:clear-path': def(z.object({ role: ModelRoleSchema }), ModelsActionResultSchema),
+  'system:info': def(z.void(), HardwareInfoSchema),
   'cuda:status': def(z.void(), CudaStatusSchema),
   'cuda:download': def(z.object({ action: z.enum(['start', 'cancel']) }), CudaStatusSchema),
   'licenses:get': def(z.void(), LicensesSchema),

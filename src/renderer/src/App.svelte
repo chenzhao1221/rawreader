@@ -3,6 +3,7 @@
   import appIcon from './assets/app-icon.png'
   import { label, zhCN as t } from './i18n/zh-CN'
   import SettingsPanel from './settings/SettingsPanel.svelte'
+  import SetupWizard from './setup/SetupWizard.svelte'
   import { activateTab, closeSettings, closeTab, go, initStore, navigate, newTab, openLogs, openSettings, setToggle, store, webBarAction } from './state.svelte'
 
   let address = $state('')
@@ -174,7 +175,11 @@
   <!-- The browse view is a native view laid over this area by the main process. -->
   <main class="content">
     {#if store.panelOpen}
-      <SettingsPanel />
+      {#if store.wizardOpen}
+        <SetupWizard />
+      {:else}
+        <SettingsPanel />
+      {/if}
     {:else if store.browse.url === ''}
       <p class="hint">{t.browse.emptyHint}</p>
     {/if}

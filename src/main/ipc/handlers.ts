@@ -2,6 +2,7 @@ import type { Config, DeepPartial } from '../../shared/config/schema'
 import type {
   CacheStats,
   CudaStatus,
+  HardwareInfo,
   Licenses,
   ModelRoleName,
   ModelsActionResult,
@@ -65,6 +66,8 @@ export interface HandlerDeps {
   modelsClearPath(role: ModelRoleName): ModelsActionResult
   getCudaStatus(): CudaStatus
   cudaDownload(action: 'start' | 'cancel'): CudaStatus
+  /** CPU, RAM, free disk and GPUs of this computer (for the first-run wizard). */
+  getHardware(): Promise<HardwareInfo>
   getLicenses(): Promise<Licenses>
 }
 
@@ -146,5 +149,6 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
   registrar.handle('models:clear-path', ({ role }) => deps.modelsClearPath(role))
   registrar.handle('cuda:status', () => deps.getCudaStatus())
   registrar.handle('cuda:download', ({ action }) => deps.cudaDownload(action))
+  registrar.handle('system:info', () => deps.getHardware())
   registrar.handle('licenses:get', () => deps.getLicenses())
 }

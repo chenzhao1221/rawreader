@@ -23,6 +23,7 @@ import { CUDA_BUILD, CudaInstaller } from './models/cuda'
 import { hashFile } from './models/download'
 import { createDialogPickers, netFetch } from './models/edge'
 import { ModelService } from './models/service'
+import { createHardwareProbe } from './system/hardware'
 import { FileVerifier, createJsonMemoStore } from './models/verify'
 import { createFontProvider } from './overlay/font'
 import { initLogging, logsDirFor } from './log/setup'
@@ -265,6 +266,9 @@ async function bootstrap(): Promise<void> {
   })
   models = modelService
 
+  // Read once: CPU, RAM, free disk and GPUs do not change while the app runs.
+  const hardwareProbe = createHardwareProbe(() => getConfig().models.dir ?? join(userDataDir, 'models'))
+
   const cudaInstaller = new CudaInstaller({
     getTargetDir: () =>
       resolveBinDir({ ...getConfig().llama, backend: 'cuda' }, { userDataDir, resourcesDir }) ??
@@ -334,6 +338,7 @@ async function bootstrap(): Promise<void> {
     modelsClearPath: (role) => modelService.clearPath(role),
     getCudaStatus: () => cudaInstaller.getStatus(),
     cudaDownload: (action) => (action === 'start' ? cudaInstaller.start() : cudaInstaller.cancel()),
+    getHardware: () => hardwareProbe.get(),
     getLicenses: () => loadLicenses(licenseDocs, (path) => readFile(path, 'utf8')),
     getCacheStats: () => resultCache?.stats() ?? { entries: 0, bytes: 0 },
     clearCache: () => {

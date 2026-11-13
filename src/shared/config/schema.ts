@@ -101,6 +101,8 @@ export const ConfigSchema = z.object({
         .prefault({}),
       /** The "still running in the tray" balloon was shown once; main-process only. */
       trayHintShown: f.bool.default(false),
+      /** The first-run wizard was finished or skipped; it does not open on later starts. */
+      setupDone: f.bool.default(false),
     })
     .prefault({}),
   llama: z
@@ -199,7 +201,7 @@ const serverPatchShape = {
 
 export const ConfigPatchSchema = z
   .strictObject({
-    ui: z.strictObject({ autoTranslate: f.bool, overlayVisible: f.bool, bubblesOnly: f.bool, adBlock: f.bool }).partial(),
+    ui: z.strictObject({ autoTranslate: f.bool, overlayVisible: f.bool, bubblesOnly: f.bool, adBlock: f.bool, setupDone: f.bool }).partial(),
     llama: z
       .strictObject({
         backend: f.backend,

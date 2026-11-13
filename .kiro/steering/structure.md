@@ -27,6 +27,7 @@ app/
    ├─ shared/              code imported by main, preloads and renderer (no Electron, no Node-only APIs)
    │  ├─ app-identity.ts   re-exports app-identity.json with types
    │  ├─ config/           zod config schema, defaults, types
+   │  ├─ setup/            engine recommendation rules for the first-run wizard
    │  └─ ipc/              channel names, zod payload schemas, typed API interfaces
    ├─ main/
    │  ├─ index.ts          app lifecycle, userData path, quit handling
@@ -42,13 +43,17 @@ app/
    │  ├─ llm/              shared OpenAI-compatible fetch client (/v1/chat/completions only)
    │  ├─ cache/            SQLite result cache, keys, LRU eviction
    │  ├─ models/           manifest, downloader, verification, CUDA backend download
+   │  ├─ system/           CPU, RAM, free disk and GPU detection for the first-run wizard
    │  ├─ adblock/          Ghostery filter engine: cached download, refresh, session attachment
    │  └─ log/              electron-log setup and redaction
    ├─ preload/
    │  ├─ shell/            exposes the typed shell API via contextBridge
    │  └─ browse/           image discovery, scroll queue, overlay (Shadow DOM), text fit
    └─ renderer/            Svelte 5 shell UI (address bar, toggles, status, settings)
-      └─ src/i18n/zh-CN.ts all UI strings
+      └─ src/
+         ├─ i18n/zh-CN.ts all UI strings
+         ├─ settings/     settings tabs
+         └─ setup/        first-run wizard (hardware, engine, models or API key)
 ```
 
 ## Rules

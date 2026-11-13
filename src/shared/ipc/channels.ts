@@ -38,6 +38,7 @@ export const INVOKE_CHANNELS = [
   'models:pick-file',
   'models:use-file',
   'models:clear-path',
+  'system:info',
   'cuda:status',
   'cuda:download',
   'licenses:get',

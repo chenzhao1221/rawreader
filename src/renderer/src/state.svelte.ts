@@ -3,6 +3,7 @@ import type {
   BrowseState,
   CacheStats,
   CudaStatus,
+  HardwareInfo,
   InvokeReq,
   Licenses,
   ModelNotice,
@@ -32,6 +33,10 @@ export interface ShellStore {
   message: string | null
   /** Settings / first-run panel. While open, main hides the native browse view. */
   panelOpen: boolean
+  /** The first-run wizard is showing instead of the settings tabs. */
+  wizardOpen: boolean
+  /** CPU, RAM, free disk and GPUs, read once when the wizard first opens. */
+  hardware: HardwareInfo | null
   tab: SettingsTab
   models: ModelsOverview | null
   /** Last notice from a model action (cancelled, wrong size ...). */
@@ -52,6 +57,8 @@ export const store: ShellStore = $state({
   progress: { total: 0, done: 0, failed: 0, active: 0 },
   message: null,
   panelOpen: false,
+  wizardOpen: false,
+  hardware: null,
   tab: 'models',
   models: null,
   modelNotice: null,
@@ -103,9 +110,22 @@ export function initStore(onFocusAddress: () => void = () => {}): () => void {
     }),
   ]
 
-  void api.invoke('config:get').then((result) => {
-    if (result.ok) store.config = result.value
-  })
+  // Config first: the first-run decision below reads `ui.setupDone`.
+  void api
+    .invoke('config:get')
+    .then((result) => {
+      if (result.ok) store.config = result.value
+      return api.invoke('models:overview')
+    })
+    .then((result) => {
+      if (!result.ok) return
+      store.models = result.value
+      // R13.1: a missing required model opens the first-run wizard once.
+      if (result.value.needsSetup && !store.config?.ui.setupDone && !store.setupHandled) {
+        store.setupHandled = true
+        openWizard()
+      }
+    })
   void api.invoke('tabs:get').then((result) => {
     if (result.ok) store.tabs = result.value
   })
@@ -115,15 +135,6 @@ export function initStore(onFocusAddress: () => void = () => {}): () => void {
   void api.invoke('llama:status').then((result) => {
     if (!result.ok) return
     for (const status of result.value) store.llama[status.role] = status
-  })
-  void api.invoke('models:overview').then((result) => {
-    if (!result.ok) return
-    store.models = result.value
-    // R13.1: a missing required model opens the first-run panel once.
-    if (result.value.needsSetup && !store.setupHandled) {
-      store.setupHandled = true
-      openSettings('models')
-    }
   })
   void api.invoke('cuda:status').then((result) => {
     if (result.ok) store.cuda = result.value
@@ -177,6 +188,7 @@ export async function setToggle(key: 'autoTranslate' | 'overlayVisible', value: 
 
 export function openSettings(tab: SettingsTab = 'models'): void {
   store.tab = tab
+  store.wizardOpen = false
   store.panelOpen = true
   store.modelNotice = null
   void window.rawreader.invoke('shell:panel-visibility', { open: true })
@@ -184,8 +196,24 @@ export function openSettings(tab: SettingsTab = 'models'): void {
   if (tab === 'licenses') void loadLicenses()
 }
 
+/** First-run wizard: hardware check, engine choice, then models or an API key. */
+export function openWizard(): void {
+  store.wizardOpen = true
+  store.panelOpen = true
+  store.modelNotice = null
+  void window.rawreader.invoke('shell:panel-visibility', { open: true })
+  void loadHardware()
+}
+
+async function loadHardware(): Promise<void> {
+  if (store.hardware) return
+  const result = await window.rawreader.invoke('system:info')
+  if (result.ok) store.hardware = result.value
+}
+
 export function closeSettings(): void {
   store.panelOpen = false
+  store.wizardOpen = false
   void window.rawreader.invoke('shell:panel-visibility', { open: false })
 }
 
