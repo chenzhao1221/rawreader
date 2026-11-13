@@ -12,6 +12,17 @@ import type { ProcessInfo } from './win-process'
 
 export const SERVER_ROLES: readonly ServerRole[] = ['ocr', 'translate']
 
+/**
+ * Whether a server should run on its own: autostart on, and needed by the translation engine
+ * (an OpenAI-compatible API needs only OCR; Gemini needs neither).
+ */
+export function wantsServer(role: ServerRole, config: Config): boolean {
+  if (!config.llama[role].autostart) return false
+  const engine = config.translate.engine
+  if (engine === 'gemini') return false
+  return role === 'ocr' || engine === 'local'
+}
+
 export interface LlamaManagerOptions {
   getConfig: () => Config
   /** User data folder, resources folder and the file-exists check used to resolve binaries and models. */
@@ -103,7 +114,7 @@ export class LlamaManager {
   async startAll(): Promise<void> {
     const config = this.options.getConfig()
     await Promise.all(
-      SERVER_ROLES.filter((role) => config.llama[role].autostart).map((role) => this.servers[role].start()),
+      SERVER_ROLES.filter((role) => wantsServer(role, config)).map((role) => this.servers[role].start()),
     )
   }
 
@@ -115,7 +126,7 @@ export class LlamaManager {
     const config = this.options.getConfig()
     const wanted = SERVER_ROLES.filter((role) => {
       const state = this.servers[role].getStatus().state
-      return config.llama[role].autostart && !this.userStopped.has(role) && (state === 'stopped' || state === 'error')
+      return wantsServer(role, config) && !this.userStopped.has(role) && (state === 'stopped' || state === 'error')
     })
     await Promise.all(wanted.map((role) => this.servers[role].start({ resetCrashes: true })))
   }
@@ -149,14 +160,23 @@ export class LlamaManager {
   /** Restarts the servers whose launch-relevant config changed (backend, binaries, models, flags). */
   handleConfigChange(next: Config, previous: Config): void {
     for (const role of SERVER_ROLES) {
-      if (launchFingerprint(role, next) === launchFingerprint(role, previous)) continue
       if (this.userStopped.has(role)) continue
       const server = this.servers[role]
       const state = server.getStatus().state
+      // The translation engine no longer needs this server (switched to an API): free its memory.
+      if (!wantsServer(role, next) && wantsServer(role, previous)) {
+        if (state !== 'stopped') {
+          this.options.logger.info(`${role}: not needed by the "${next.translate.engine}" engine, stopping`)
+          void server.stop()
+        }
+        continue
+      }
+      const needed = wantsServer(role, next) && !wantsServer(role, previous)
+      if (!needed && launchFingerprint(role, next) === launchFingerprint(role, previous)) continue
       if (state !== 'stopped') {
         this.options.logger.info(`${role}: launch config changed, restarting`)
         void server.restart()
-      } else if (next.llama[role].autostart) {
+      } else if (wantsServer(role, next)) {
         void server.start({ resetCrashes: true })
       }
     }

@@ -107,6 +107,9 @@ export const WebTextBarActionSchema = z.object({
 })
 export type WebTextBarAction = z.infer<typeof WebTextBarActionSchema>
 
+export const SecretsStatusSchema = z.object({ openai: z.boolean(), gemini: z.boolean() })
+export type SecretsStatus = z.infer<typeof SecretsStatusSchema>
+
 export const ShellNoticeSchema = z.object({
   code: z.enum(['DOWNLOAD_CANCELLED', 'NAVIGATION_BLOCKED', 'LOAD_FAILED']),
 })
@@ -301,6 +304,10 @@ export const ipc = {
   'webtext:done': def(z.object({ docId: z.string().min(1).max(64), state: z.enum(['translated', 'restored', 'error']) }), z.void(), ['browse']),
   'webtext:bar': def(z.void(), WebTextBarSchema),
   'webtext:bar-action': def(WebTextBarActionSchema, z.void()),
+  /** Which API keys are set. Keys themselves never leave main. */
+  'secrets:status': def(z.void(), SecretsStatusSchema),
+  /** Saves (or, with an empty value, removes) an API key. */
+  'secrets:set': def(z.object({ name: z.enum(['openai', 'gemini']), value: z.string().max(400) }), SecretsStatusSchema),
   'config:get': def(z.void(), ConfigSchema),
   'config:update': def(ConfigPatchSchema, ConfigSchema),
   'llama:status': def(z.void(), z.array(ServerStatusSchema)),

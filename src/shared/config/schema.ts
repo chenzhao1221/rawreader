@@ -159,6 +159,19 @@ export const ConfigSchema = z.object({
       contextUnits: z.number().int().min(0).default(3),
       /** Translate all bubbles of an image in one numbered request (falls back per bubble). */
       batch: f.bool.default(true),
+      /**
+       * Who reads and translates: local llama servers, an OpenAI-compatible API for translation
+       * (OCR stays local), or Gemini for both (no local model at all).
+       */
+      engine: z.enum(['local', 'openai', 'gemini']).default('local'),
+      /** OpenAI-compatible endpoint (DeepSeek, OpenRouter, a local LM Studio ...). The key lives in secrets. */
+      api: z
+        .object({
+          baseUrl: z.string().max(500).default('https://api.deepseek.com/v1'),
+          model: z.string().min(1).max(200).default('deepseek-chat'),
+        })
+        .prefault({}),
+      gemini: z.object({ model: z.string().min(1).max(200).default('gemini-2.5-flash') }).prefault({}),
     })
     .prefault({}),
   cache: z.object({ maxBytes: f.maxBytes.default(2 * 1024 ** 3) }).prefault({}),
@@ -216,8 +229,37 @@ export const ConfigPatchSchema = z
         maxBoxImageCoverage: f.maxBoxImageCoverage,
       })
       .partial(),
+    translate: z
+      .strictObject({
+        engine: z.enum(['local', 'openai', 'gemini']),
+        batch: f.bool,
+        api: z
+          .strictObject({
+            baseUrl: z
+              .string()
+              .max(500)
+              .refine(isAllowedApiBase, { message: 'Use https://, or http:// to this computer only' }),
+            model: z.string().min(1).max(200),
+          })
+          .partial(),
+        gemini: z.strictObject({ model: z.string().min(1).max(200).regex(/^[\w.-]+$/) }).partial(),
+      })
+      .partial(),
     cache: z.strictObject({ maxBytes: f.maxBytes }).partial(),
   })
   .partial()
+
+/** API base URLs: https anywhere, plain http only to this computer (LM Studio, Ollama). */
+export function isAllowedApiBase(value: string): boolean {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  if (url.username || url.password) return false
+  if (url.protocol === 'https:') return true
+  return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+}
 
 export type ConfigPatch = z.infer<typeof ConfigPatchSchema>

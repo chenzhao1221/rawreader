@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, ipcMain, net, shell as electronShell } from 'electron'
+import { app, ipcMain, net, safeStorage, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
 import { INFOBAR_HEIGHT, MAX_TABS } from '../shared/constants'
 import type { EventChannel } from '../shared/ipc/channels'
@@ -39,6 +39,7 @@ import type { TabManager } from './window/tabs'
 import type { BrowseView } from './window/browse-view'
 import { GoogleTranslator } from './webtext/google'
 import { AdBlock } from './adblock/adblock'
+import { SecretStore } from './secrets/store'
 import { WebTextService } from './webtext/service'
 import { createAppTray, showWindow } from './window/tray'
 import type { AppTray } from './window/tray'
@@ -101,6 +102,7 @@ async function bootstrap(): Promise<void> {
     logger: createLogger('adblock'),
   })
   void adBlock.setEnabled(getConfig().ui.adBlock)
+  const secrets = new SecretStore(join(userDataDir, 'secrets.json'), safeStorage)
 
   const shellWindow = createShellWindow(join(resourcesDir, 'icons', 'icon.png'))
   shell = shellWindow
@@ -152,6 +154,8 @@ async function bootstrap(): Promise<void> {
     env: modelEnv,
     workerPath: join(import.meta.dirname, 'detect-worker.js'),
     sendProgress: (progress) => sendToShell('pipeline:progress', progress),
+    secrets: { get: (name) => secrets.get(name), has: (name) => secrets.has(name) },
+    fetch: (url, init) => net.fetch(url, init),
     ...(resultCache
       ? { cache: createPipelineCache({ cache: resultCache, getIdentity: createIdentityProvider(getConfig, modelEnv), logger: cacheLogger }) }
       : {}),
@@ -315,6 +319,11 @@ async function bootstrap(): Promise<void> {
     webTextDone: ({ docId, state }, senderId) => webText.done(senderId, docId, state),
     getWebTextBar: () => webText.barFor(tabManager.active()?.webContentsId ?? null),
     webTextBarAction: (action) => webText.barAction(action),
+    getSecretsStatus: () => secrets.status(),
+    setSecret: (name, value) => {
+      secrets.set(name, value)
+      return secrets.status()
+    },
     getOverlayFont,
     getModelsOverview: () => modelService.getOverview(),
     modelsDownload: (action, role) => modelService.download(action, role),

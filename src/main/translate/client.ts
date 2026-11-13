@@ -28,6 +28,8 @@ export interface TranslateClientOptions {
   contextUnits: number
   timeoutMs?: number
   fetchImpl?: typeof fetch
+  /** Translate through an OpenAI-compatible API instead of the local server. */
+  remote?: { baseUrl: string; apiKey: string }
 }
 
 export interface TranslateRequest {
@@ -136,6 +138,7 @@ export class TranslateClient {
         timeoutMs: options.timeoutMs ?? TRANSLATE_TIMEOUT_MS,
         ...(signal ? { signal } : {}),
         ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+        ...(options.remote ? { remote: options.remote } : {}),
       })
       if (result.ok) return { ok: true, text: stripThinking(result.text) }
       if (result.error.code !== 'NETWORK') break

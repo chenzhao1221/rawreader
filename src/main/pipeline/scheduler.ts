@@ -27,6 +27,8 @@ export interface PipelineSettings {
   maxUnitsPerImage: number
   /** Skip free-text units: no OCR, no translation, nothing delivered for them. Read per image and per delivery. */
   bubblesOnly: boolean
+  /** Who reads and translates. 'gemini' uses `deps.vision` and no local OCR. */
+  engine: 'local' | 'openai' | 'gemini'
 }
 
 /** Persistent result store keyed by image content hash (the identity part of the key is the implementation's concern). */
@@ -44,6 +46,10 @@ export interface PipelineDeps {
     translate(request: TranslateRequest): Promise<TranslateResult>
     /** Optional: all bubbles of an image in one request; null entries are translated one by one. */
     translateBatch?(sources: readonly string[], signal?: AbortSignal): Promise<(string | null)[]>
+  }
+  /** Gemini one-stop mode: reads and translates crops itself (used when `settings().engine` is 'gemini'). */
+  vision?: {
+    readAndTranslate(crops: readonly (Uint8Array | null)[], signal?: AbortSignal): Promise<({ source: string; translation: string } | null)[]>
   }
   /** `null` when both servers can take requests, otherwise why not. */
   serversUnavailable(): { code: string; message: string } | null
@@ -380,6 +386,63 @@ export class Pipeline {
     const unavailable = this.deps.serversUnavailable()
     if (unavailable) throw new StageFailure(unavailable.code, unavailable.message)
 
+    let texts: { text: string; failed: boolean }[]
+    let watermark: boolean[]
+    let outcomes: { translation: string; failed: boolean; echo: boolean }[]
+    const vision = this.deps.vision
+    if (settings.engine === 'gemini' && vision) {
+      // Gemini one-stop: it reads and translates all crops of the image in one go; no local OCR.
+      const start = performance.now()
+      const answers = await this.stage(doc, 'translate', distance, () =>
+        vision.readAndTranslate(
+          work.map((unit) => unit.ocrPng),
+          doc.controller.signal,
+        ),
+      )
+      timings.translateMs = performance.now() - start
+      texts = answers.map((a) => (a ? { text: a.source, failed: false } : { text: '', failed: true }))
+      watermark = texts.map((t) => !t.failed && looksLikeWatermark(t.text))
+      outcomes = answers.map((a) => ({ translation: a?.translation ?? '', failed: a !== null && a.source !== '' && a.translation === '', echo: false }))
+    } else {
+      ;({ texts, watermark, outcomes } = await this.readAndTranslateLocally(doc, work, distance, timings))
+    }
+
+    const workResults: UnitResult[] = work.map((unit, index) => {
+      const ocr = texts[index] as { text: string; failed: boolean }
+      const tr = outcomes[index] as { translation: string; failed: boolean; echo: boolean }
+      let status: UnitResult['status'] = 'ok'
+      if (ocr.failed) status = 'ocr-failed'
+      else if (watermark[index]) status = 'watermark'
+      else if (ocr.text.trim().length === 0) status = 'no-text'
+      else if (tr.failed) status = 'translate-failed'
+      else if (tr.echo) status = 'echo'
+      return {
+        kind: unit.kind,
+        bubbleOnly: unit.bubbleOnly,
+        drawBox: unit.drawBox,
+        ocrBox: unit.ocrBox,
+        ocrText: ocr.text,
+        translation: tr.translation,
+        status,
+      }
+    })
+    // Put skipped free units back at their detected positions.
+    let next = 0
+    const results = units.map((unit) => (skipFree && unit.kind === 'free' ? skippedUnit(unit) : (workResults[next++] as UnitResult)))
+    return { ...base, units: results }
+  }
+
+  /** Local path: OCR each crop on the OCR server, then translate (whole image first, then bubble by bubble). */
+  private async readAndTranslateLocally(
+    doc: DocState,
+    work: readonly DetectOk['units'][number][],
+    distance: number,
+    timings: StageTimings,
+  ): Promise<{
+    texts: { text: string; failed: boolean }[]
+    watermark: boolean[]
+    outcomes: { translation: string; failed: boolean; echo: boolean }[]
+  }> {
     // OCR: one request per unit, bounded by the OCR queue.
     const ocrStart = performance.now()
     const texts = await Promise.all(
@@ -419,30 +482,7 @@ export class Pipeline {
       }),
     )
     timings.translateMs = performance.now() - translateStart
-
-    const workResults: UnitResult[] = work.map((unit, index) => {
-      const ocr = texts[index] as { text: string; failed: boolean }
-      const tr = outcomes[index] as { translation: string; failed: boolean; echo: boolean }
-      let status: UnitResult['status'] = 'ok'
-      if (ocr.failed) status = 'ocr-failed'
-      else if (watermark[index]) status = 'watermark'
-      else if (ocr.text.trim().length === 0) status = 'no-text'
-      else if (tr.failed) status = 'translate-failed'
-      else if (tr.echo) status = 'echo'
-      return {
-        kind: unit.kind,
-        bubbleOnly: unit.bubbleOnly,
-        drawBox: unit.drawBox,
-        ocrBox: unit.ocrBox,
-        ocrText: ocr.text,
-        translation: tr.translation,
-        status,
-      }
-    })
-    // Put skipped free units back at their detected positions.
-    let next = 0
-    const results = units.map((unit) => (skipFree && unit.kind === 'free' ? skippedUnit(unit) : (workResults[next++] as UnitResult)))
-    return { ...base, units: results }
+    return { texts, watermark, outcomes }
   }
 
   /**

@@ -12,6 +12,8 @@ import { DetectClient } from '../detect/client'
 import type { WorkerLike } from '../detect/client'
 import type { DetectJob, DetectOutcome, DetectService } from '../detect/service'
 import type { Logger } from '../log/log'
+import type { FetchLike as GeminiFetch } from '../gemini/client'
+import type { SecretName } from '../secrets/store'
 import { toOverlayPayload } from './overlay-payload'
 import { Pipeline } from './scheduler'
 import type { PipelineCache } from './scheduler'
@@ -28,6 +30,10 @@ export interface PipelineWiringOptions {
   sendProgress: (progress: PipelineProgress) => void
   /** Persistent result cache, or undefined when it could not be opened. */
   cache?: PipelineCache
+  /** API keys (OpenAI-compatible API, Gemini). */
+  secrets: { get(name: SecretName): string | null; has(name: SecretName): boolean }
+  /** Network fetch for Gemini (Electron net, so the system proxy applies). */
+  fetch: GeminiFetch
   logger: Logger
 }
 
@@ -93,7 +99,7 @@ class LazyDetectService implements DetectService {
 export function createPipelineWiring(options: PipelineWiringOptions): PipelineWiring {
   const { logger } = options
   const fetchBytes = createSessionFetch(options.browseSession)
-  const clients = createModelClients(options.getConfig, options.getServerStatus)
+  const clients = createModelClients(options.getConfig, options.getServerStatus, options.secrets.get, options.fetch, logger)
 
   interface TabEntry {
     wc: WebContents
@@ -129,11 +135,16 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
     detect: new LazyDetectService(options),
     ocr: clients.ocr,
     translator: clients.translator,
+    ...(clients.vision ? { vision: clients.vision } : {}),
     serversUnavailable: () =>
-      serversUnavailable({
-        ocr: options.getServerStatus('ocr'),
-        translate: options.getServerStatus('translate'),
-      }),
+      serversUnavailable(
+        {
+          ocr: options.getServerStatus('ocr'),
+          translate: options.getServerStatus('translate'),
+        },
+        options.getConfig().translate.engine,
+        options.secrets.has,
+      ),
     onResult: (subscriber, result) => {
       const payload = toOverlayPayload(subscriber, result)
       for (const entry of tabs.values()) {

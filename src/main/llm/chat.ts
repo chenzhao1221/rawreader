@@ -23,6 +23,14 @@ export interface ChatRequest {
   timeoutMs: number
   /** Injectable for tests. */
   fetchImpl?: typeof fetch
+  /** An OpenAI-compatible API instead of the local server: base URL (".../v1") and key. `port` is then unused. */
+  remote?: { baseUrl: string; apiKey: string }
+}
+
+/** `<base>/chat/completions` for a remote API, the local llama-server URL otherwise. */
+export function chatUrl(request: Pick<ChatRequest, 'port' | 'remote'>): string {
+  if (request.remote) return `${request.remote.baseUrl.replace(/\/+$/, '')}/chat/completions`
+  return `http://${LLAMA_HOST}:${request.port}${CHAT_COMPLETIONS_PATH}`
 }
 
 export type ChatErrorCode = 'ABORTED' | 'TIMEOUT' | 'NETWORK' | 'HTTP_ERROR' | 'BAD_RESPONSE'
@@ -53,7 +61,7 @@ export function extractChatText(body: unknown): { text: string; finishReason: st
   return null
 }
 
-/** Posts one chat completion to a local llama-server. Never throws. */
+/** Posts one chat completion to the local llama-server or a remote OpenAI-compatible API. Never throws. */
 export async function chat(request: ChatRequest): Promise<ChatResult> {
   const doFetch = request.fetchImpl ?? fetch
   const timeout = AbortSignal.timeout(request.timeoutMs)
@@ -61,9 +69,11 @@ export async function chat(request: ChatRequest): Promise<ChatResult> {
 
   let response: Response
   try {
-    response = await doFetch(`http://${LLAMA_HOST}:${request.port}${CHAT_COMPLETIONS_PATH}`, {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (request.remote?.apiKey) headers['Authorization'] = `Bearer ${request.remote.apiKey}`
+    response = await doFetch(chatUrl(request), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         model: request.model,
         messages: request.messages,

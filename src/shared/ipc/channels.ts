@@ -19,6 +19,8 @@ export const INVOKE_CHANNELS = [
   'webtext:done',
   'webtext:bar',
   'webtext:bar-action',
+  'secrets:status',
+  'secrets:set',
   'config:get',
   'config:update',
   'llama:status',

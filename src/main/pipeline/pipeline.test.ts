@@ -80,6 +80,7 @@ function setup(overrides: {
     ocrPadding: 8,
     maxUnitsPerImage: 50,
     bubblesOnly: false,
+    engine: 'local',
     ...overrides.settings,
   }
   const capture = vi.fn((request: CaptureRequest): Promise<CaptureResult> => {

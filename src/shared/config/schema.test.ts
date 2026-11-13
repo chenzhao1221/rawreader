@@ -61,7 +61,15 @@ describe('ConfigSchema defaults', () => {
         readingDirection: 'ltr',
         maxBoxImageCoverage: 0.85,
       },
-      translate: { targetLang: 'zh-Hans', promptVariant: 'lmt', contextUnits: 3, batch: true },
+      translate: {
+        targetLang: 'zh-Hans',
+        promptVariant: 'lmt',
+        contextUnits: 3,
+        batch: true,
+        engine: 'local',
+        api: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+        gemini: { model: 'gemini-2.5-flash' },
+      },
       cache: { maxBytes: 2 * 1024 ** 3 },
     })
   })

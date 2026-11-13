@@ -114,7 +114,11 @@ export class ModelService {
           : null,
       }
     })
-    const missing = items.filter((item) => item.path === null)
+    // Only files the chosen engine runs count: Gemini needs none of the GGUF files, an API translator no translation model.
+    const engine = config.translate.engine
+    const needed = (role: string): boolean =>
+      role === 'detector' || (engine !== 'gemini' && (role === 'ocr' || role === 'ocrMmproj')) || (engine === 'local' && role === 'translator')
+    const missing = items.filter((item) => item.path === null && needed(item.role))
     const allowed = this.downloadsAllowed()
     return {
       modelsDir,

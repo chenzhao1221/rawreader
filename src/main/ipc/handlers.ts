@@ -17,6 +17,7 @@ import type {
   WebTextPage,
   WebTextRequest,
   WebTextResult,
+  SecretsStatus,
 } from '../../shared/ipc/contract'
 import { normalizeAddress } from '../window/address'
 import type { BrowseAction } from '../window/browse-view'
@@ -48,6 +49,8 @@ export interface HandlerDeps {
   webTextDone(done: { docId: string; state: 'translated' | 'restored' | 'error' }, senderId: number): void
   getWebTextBar(): WebTextBar
   webTextBarAction(action: WebTextBarAction): void
+  getSecretsStatus(): SecretsStatus
+  setSecret(name: 'openai' | 'gemini', value: string): SecretsStatus
   /** Bundled overlay font bytes, or null when the file is missing. */
   getOverlayFont(): Promise<Uint8Array | null>
   getCacheStats(): CacheStats
@@ -112,6 +115,8 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
   registrar.handle('webtext:bar-action', (action) => {
     deps.webTextBarAction(action)
   })
+  registrar.handle('secrets:status', () => deps.getSecretsStatus())
+  registrar.handle('secrets:set', ({ name, value }) => deps.setSecret(name, value))
 
   registrar.handle('config:get', () => deps.getConfig())
 

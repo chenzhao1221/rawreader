@@ -17,7 +17,7 @@ import type {
 } from '../../shared/ipc/contract'
 import { label, zhCN } from './i18n/zh-CN'
 
-export type SettingsTab = 'models' | 'servers' | 'advanced' | 'licenses'
+export type SettingsTab = 'engine' | 'models' | 'servers' | 'advanced' | 'licenses'
 
 export interface ShellStore {
   browse: BrowseState

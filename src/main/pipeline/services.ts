@@ -1,6 +1,10 @@
 import type { Config } from '../../shared/config/schema'
 import type { ServerRole, ServerStatus } from '../../shared/ipc/contract'
 import { OcrClient } from '../ocr/client'
+import { GeminiClient } from '../gemini/client'
+import type { FetchLike as GeminiFetch } from '../gemini/client'
+import type { Logger } from '../log/log'
+import type { SecretName } from '../secrets/store'
 import { RETRY_SCALE, looksLikeFormula } from '../ocr/garbled'
 
 /** Enlarges a PNG crop for a second OCR pass. sharp is loaded on first use only. */
@@ -21,9 +25,20 @@ export function effectivePort(status: ServerStatus | null, configured: number): 
   return status?.port ?? configured
 }
 
-/** Reason the pipeline cannot call the servers yet, or `null` when both are ready. */
-export function serversUnavailable(statuses: Record<ServerRole, ServerStatus | null>): { code: string; message: string } | null {
-  for (const role of ['ocr', 'translate'] as const) {
+/** Local servers each translation engine needs. */
+export function serversFor(engine: Config['translate']['engine']): ServerRole[] {
+  return engine === 'local' ? ['ocr', 'translate'] : engine === 'openai' ? ['ocr'] : []
+}
+
+/** Reason the pipeline cannot run yet (a needed server not ready, or an API key missing), or `null`. */
+export function serversUnavailable(
+  statuses: Record<ServerRole, ServerStatus | null>,
+  engine: Config['translate']['engine'] = 'local',
+  hasKey: (name: SecretName) => boolean = () => true,
+): { code: string; message: string } | null {
+  if (engine === 'openai' && !hasKey('openai')) return { code: 'API_KEY_MISSING', message: 'No API key set for the translation API' }
+  if (engine === 'gemini' && !hasKey('gemini')) return { code: 'API_KEY_MISSING', message: 'No Gemini API key set' }
+  for (const role of serversFor(engine)) {
     const status = statuses[role]
     if (status?.state !== 'ready') {
       const detail = status ? `${status.state}${status.errorCode ? ` (${status.errorCode})` : ''}` : 'unknown'
@@ -41,8 +56,17 @@ export function serversUnavailable(statuses: Record<ServerRole, ServerStatus | n
 export function createModelClients(
   getConfig: () => Config,
   getStatus: (role: ServerRole) => ServerStatus | null,
-): Pick<PipelineDeps, 'ocr' | 'translator'> {
-  const clientFor = (config: Config): TranslateClient => clientForConfig(config, getStatus)
+  getSecret: (name: SecretName) => string | null = () => null,
+  fetchImpl: GeminiFetch = (url, init) => fetch(url, init),
+  logger?: Logger,
+): Pick<PipelineDeps, 'ocr' | 'translator' | 'vision'> {
+  const clientFor = (config: Config): TranslateClient => clientForConfig(config, getStatus, getSecret)
+  const gemini = new GeminiClient({
+    fetch: fetchImpl,
+    getApiKey: () => getSecret('gemini'),
+    getModel: () => getConfig().translate.gemini.model,
+    onError: (message) => logger?.warn(message),
+  })
   return {
     ocr: {
       async recognize(png, signal) {
@@ -72,18 +96,23 @@ export function createModelClients(
         return clientFor(config).translateBatch(sources, signal)
       },
     },
+    vision: gemini,
   }
 }
 
 function clientForConfig(
   config: Config,
   getStatus: (role: ServerRole) => ServerStatus | null,
+  getSecret: (name: SecretName) => string | null,
 ): TranslateClient {
+  const remote = config.translate.engine === 'openai'
   return new TranslateClient({
     getPort: () => effectivePort(getStatus('translate'), config.llama.translate.port),
-    model: config.llama.translate.alias,
+    model: remote ? config.translate.api.model : config.llama.translate.alias,
     targetLang: config.translate.targetLang,
     promptVariant: config.translate.promptVariant,
     contextUnits: config.translate.contextUnits,
+    // A remote API answers more slowly than the local server; allow a whole page.
+    ...(remote ? { remote: { baseUrl: config.translate.api.baseUrl, apiKey: getSecret('openai') ?? '' }, timeoutMs: 90_000 } : {}),
   })
 }
