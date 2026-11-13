@@ -53,6 +53,20 @@ export const BrowseStateSchema = z.object({
 })
 export type BrowseState = z.infer<typeof BrowseStateSchema>
 
+export const TabInfoSchema = z.object({
+  id: z.number().int(),
+  url: z.string(),
+  title: z.string(),
+  loading: z.boolean(),
+})
+export type TabInfo = z.infer<typeof TabInfoSchema>
+
+export const TabsStateSchema = z.object({
+  tabs: z.array(TabInfoSchema),
+  activeId: z.number().int().nullable(),
+})
+export type TabsState = z.infer<typeof TabsStateSchema>
+
 export const ShellNoticeSchema = z.object({
   code: z.enum(['DOWNLOAD_CANCELLED', 'NAVIGATION_BLOCKED', 'LOAD_FAILED']),
 })
@@ -237,6 +251,10 @@ export const ipc = {
   'browse:navigate': def(z.object({ input: z.string().max(4096) }), NavResultSchema),
   'browse:go': def(z.object({ action: z.enum(['back', 'forward', 'reload', 'stop']) }), z.void()),
   'shell:panel-visibility': def(z.object({ open: z.boolean() }), z.void()),
+  'tabs:get': def(z.void(), TabsStateSchema),
+  'tabs:new': def(z.object({ input: z.string().max(4096).optional() }), NavResultSchema),
+  'tabs:close': def(z.object({ id: z.number().int() }), z.void()),
+  'tabs:activate': def(z.object({ id: z.number().int() }), z.void()),
   'config:get': def(z.void(), ConfigSchema),
   'config:update': def(ConfigPatchSchema, ConfigSchema),
   'llama:status': def(z.void(), z.array(ServerStatusSchema)),
@@ -270,6 +288,8 @@ export const ipc = {
 
 export const events = {
   'browse:state': BrowseStateSchema,
+  'tabs:state': TabsStateSchema,
+  'shell:focus-address': z.object({}),
   'config:changed': ConfigSchema,
   'llama:status': ServerStatusSchema,
   'shell:notice': ShellNoticeSchema,

@@ -5,10 +5,12 @@ import type { InvokeParsedReq, InvokeRes, IpcResult, SenderKind } from '../../sh
 import { createLogger } from '../log/log'
 import type { Logger } from '../log/log'
 
-/** Ids of the webContents allowed to call each kind of channel. `null` while the view does not exist. */
+/** Which webContents are allowed to call each kind of channel. */
 export interface SenderIds {
+  /** Id of the shell renderer, or `null` while it does not exist. */
   shell(): number | null
-  browse(): number | null
+  /** True when the id belongs to one of the browse tabs. */
+  isBrowse(webContentsId: number): boolean
 }
 
 /** The part of IpcMain this module uses. Lets tests pass a fake without importing Electron. */
@@ -24,7 +26,8 @@ export type ChannelHandler<C extends InvokeChannel> = (
 function isAllowedSender(event: SenderEventLike, allowed: readonly SenderKind[], ids: SenderIds): boolean {
   const senderId = event.sender.id
   return allowed.some((kind) => {
-    const id = kind === 'shell' ? ids.shell() : ids.browse()
+    if (kind === 'browse') return ids.isBrowse(senderId)
+    const id = ids.shell()
     return id !== null && id === senderId
   })
 }

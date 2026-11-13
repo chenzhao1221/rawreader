@@ -5,7 +5,7 @@ import type { IpcMainLike, SenderEventLike } from './register'
 
 const SHELL_ID = 7
 const BROWSE_ID = 9
-const ids = { shell: () => SHELL_ID, browse: () => BROWSE_ID }
+const ids = { shell: () => SHELL_ID, isBrowse: (id: number) => id === BROWSE_ID }
 
 function event(senderId: number): SenderEventLike {
   return { sender: { id: senderId } } as unknown as SenderEventLike
@@ -51,7 +51,7 @@ describe('createChannelHandler', () => {
     const stranger = await run(event(12345), undefined)
     expect(stranger.ok === false && stranger.error.code).toBe('FORBIDDEN_SENDER')
 
-    const noShell = createChannelHandler('llama:status', handler, { shell: () => null, browse: () => null }, silentLogger)
+    const noShell = createChannelHandler('llama:status', handler, { shell: () => null, isBrowse: () => false }, silentLogger)
     const result = await noShell(event(SHELL_ID), undefined)
     expect(result.ok === false && result.error.code).toBe('FORBIDDEN_SENDER')
     expect(handler).not.toHaveBeenCalled()

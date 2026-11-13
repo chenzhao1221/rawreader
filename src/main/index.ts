@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, ipcMain, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
+import { MAX_TABS } from '../shared/constants'
 import type { EventChannel } from '../shared/ipc/channels'
 import type { EventPayload } from '../shared/ipc/contract'
 import { createIdentityProvider } from './cache/identity'
@@ -29,11 +30,12 @@ import { createPipelineWiring } from './pipeline/wiring'
 import type { PipelineWiring } from './pipeline/wiring'
 import { SHUTDOWN_TIMEOUT_MS, createQuitGuard } from './shutdown'
 import { isHttpUrl } from './window/address'
-import { createBrowseView } from './window/browse-view'
-import type { BrowseView } from './window/browse-view'
 import { setupBrowseSession } from './window/session'
 import { createShellWindow } from './window/shell-window'
 import type { ShellWindow } from './window/shell-window'
+import { restorePlan, shortcutFor } from './window/tab-order'
+import { createTabManager } from './window/tabs'
+import type { TabManager } from './window/tabs'
 import { createAppTray, showWindow } from './window/tray'
 import type { AppTray } from './window/tray'
 
@@ -60,7 +62,7 @@ if (headlessFlag && headlessArgs === null) {
 }
 
 let shell: ShellWindow | null = null
-let browse: BrowseView | null = null
+let tabs: TabManager | null = null
 let manager: LlamaManager | null = null
 let wiring: PipelineWiring | null = null
 let openCache: ResultCache | null = null
@@ -113,21 +115,6 @@ async function bootstrap(): Promise<void> {
     }
   })
 
-  const browseView = createBrowseView({
-    win,
-    preloadPath: join(import.meta.dirname, '../preload/browse.cjs'),
-    onState: (state) => {
-      sendToShell('browse:state', state)
-      win.setTitle(state.title ? `${state.title} - ${appIdentity.productName}` : appIdentity.productName)
-    },
-    onNotice: (notice) => sendToShell('shell:notice', notice),
-    onNavigated: (url) => {
-      updateConfig({ ui: { lastUrl: url } })
-    },
-  })
-  browse = browseView
-  browseView.onDestroyed(() => log.info('Browse view webContents destroyed'))
-
   const llama = new LlamaManager({
     getConfig,
     env: { userDataDir, resourcesDir, exists: existsSync },
@@ -148,25 +135,52 @@ async function bootstrap(): Promise<void> {
   const pipelineWiring = createPipelineWiring({
     getConfig,
     getServerStatus: (role) => llama.getStatus(role),
-    browseWebContents: browseView.webContents,
     browseSession,
     env: modelEnv,
     workerPath: join(import.meta.dirname, 'detect-worker.js'),
     sendProgress: (progress) => sendToShell('pipeline:progress', progress),
-    sendPageConfig: (config) => {
-      const target = browseView.webContents
-      if (!target.isDestroyed()) target.send('page:config', config)
-    },
-    sendOverlay: (payload) => {
-      const target = browseView.webContents
-      if (!target.isDestroyed()) target.send('overlay:result', payload)
-    },
     ...(resultCache
       ? { cache: createPipelineCache({ cache: resultCache, getIdentity: createIdentityProvider(getConfig, modelEnv), logger: cacheLogger }) }
       : {}),
     logger: createLogger('pipeline'),
   })
   wiring = pipelineWiring
+
+  let panelOpen = false
+  let savedSession = JSON.stringify(getConfig().ui.openTabs)
+  const tabManager = createTabManager({
+    win,
+    preloadPath: join(import.meta.dirname, '../preload/browse.cjs'),
+    onActiveState: (state) => {
+      sendToShell('browse:state', state)
+      if (!win.isDestroyed()) win.setTitle(state.title ? `${state.title} - ${appIdentity.productName}` : appIdentity.productName)
+    },
+    onTabs: (state) => sendToShell('tabs:state', state),
+    onNotice: (notice) => sendToShell('shell:notice', notice),
+    // Written only when the URLs or the active tab change, not on every title or loading update.
+    onSession: (urls, active) => {
+      const next = JSON.stringify({ urls, active })
+      if (next === savedSession) return
+      savedSession = next
+      updateConfig({ ui: { openTabs: { urls, active }, lastUrl: urls[active] ?? null } })
+    },
+    onTabCreated: (view) => pipelineWiring.attachTab(view.webContents),
+    onTabClosed: (view) => pipelineWiring.detachTab(view.webContents),
+    onActiveChanged: (view) => pipelineWiring.setActiveTab(view ? view.webContents : null),
+    onFocusAddress: () => {
+      sendToShell('shell:focus-address', {})
+      if (!win.isDestroyed()) win.webContents.focus()
+    },
+    isPanelOpen: () => panelOpen,
+    isQuitting: () => quitting,
+  })
+  tabs = tabManager
+  win.webContents.on('before-input-event', (event, input) => {
+    const shortcut = shortcutFor(input)
+    if (!shortcut) return
+    event.preventDefault()
+    tabManager.shortcut(shortcut)
+  })
   const getOverlayFont = createFontProvider(resourcesDir, (path) => readFile(path))
 
   const modelService = new ModelService({
@@ -204,19 +218,33 @@ async function bootstrap(): Promise<void> {
 
   const registrar = createIpcRegistrar(ipcMain, {
     shell: () => (shellWindow.win.isDestroyed() ? null : shellWindow.webContentsId),
-    browse: () => browseView.webContentsId,
+    isBrowse: (id) => tabManager.isTab(id),
   })
   disposeIpc = () => registrar.dispose()
   registerSkeletonHandlers(registrar, {
     getConfig,
     updateConfig,
-    navigate: (url) => browseView.navigate(url),
-    go: (action) => browseView.go(action),
-    setBrowseVisible: (visible) => browseView.setVisible(visible),
+    navigate: (url) => tabManager.navigate(url),
+    go: (action) => tabManager.go(action),
+    setBrowseVisible: (visible) => {
+      panelOpen = !visible
+      tabManager.setVisible(visible)
+    },
+    getTabs: () => tabManager.state(),
+    newTab: (url) => {
+      tabManager.open(url, true)
+      // A blank tab is opened to type in: hand the caret to the address bar.
+      if (url === null) {
+        sendToShell('shell:focus-address', {})
+        if (!win.isDestroyed()) win.webContents.focus()
+      }
+    },
+    closeTab: (id) => tabManager.close(id),
+    activateTab: (id) => tabManager.activate(id),
     getLlamaStatuses: () => llama.getStatuses(),
     controlLlama: (role, action) => llama.control(role, action),
-    pageHello: (hello) => pipelineWiring.pageHello(hello),
-    pageImages: (batch) => pipelineWiring.pageImages(batch),
+    pageHello: (hello, senderId) => pipelineWiring.pageHello(hello, senderId),
+    pageImages: (batch, senderId) => pipelineWiring.pageImages(batch, senderId),
     getOverlayFont,
     getModelsOverview: () => modelService.getOverview(),
     modelsDownload: (action, role) => modelService.download(action, role),
@@ -250,11 +278,13 @@ async function bootstrap(): Promise<void> {
     log.error(`Shell renderer failed to load: ${error instanceof Error ? error.message : String(error)}`)
   })
 
-  // Hand the shell its initial state, then reopen the last page (R2.11).
-  sendToShell('browse:state', browseView.getState())
+  // Reopen the tabs of the last session (R2.11), then hand the shell its initial state.
+  const plan = restorePlan(getConfig().ui.openTabs, getConfig().ui.lastUrl, isHttpUrl, MAX_TABS)
+  if (plan.urls.length === 0) tabManager.open(null, true)
+  plan.urls.forEach((url, index) => tabManager.open(url, index === plan.active))
+  sendToShell('tabs:state', tabManager.state())
+  sendToShell('browse:state', tabManager.active()?.getState() ?? { url: '', title: '', canGoBack: false, canGoForward: false, loading: false })
   for (const status of llama.getStatuses()) sendToShell('llama:status', status)
-  const lastUrl = getConfig().ui.lastUrl
-  if (lastUrl && isHttpUrl(lastUrl)) browseView.navigate(lastUrl)
 
   // Verify the model files in the background (sizes now, sha256 once per file).
   modelService.refresh()
@@ -299,7 +329,7 @@ if (headlessFlag) {
       openCache?.close()
       openCache = null
       await manager?.stopAll()
-      browse?.destroy()
+      tabs?.destroyAll()
       tray?.destroy()
       tray = null
     },

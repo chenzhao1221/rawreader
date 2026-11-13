@@ -28,6 +28,11 @@ export const zhCN = {
     emptyHint: '在上方地址栏输入网址，开始阅读。',
     loading: '加载中…',
   },
+  tabs: {
+    newTab: '新标签页（Ctrl+T）',
+    close: '关闭标签页（Ctrl+W）',
+    untitled: '新标签页',
+  },
   status: {
     openLogs: '打开日志文件夹',
     progress: '本页进度',

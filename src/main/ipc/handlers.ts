@@ -11,6 +11,7 @@ import type {
   PageImagesBatch,
   ServerRole,
   ServerStatus,
+  TabsState,
 } from '../../shared/ipc/contract'
 import { normalizeAddress } from '../window/address'
 import type { BrowseAction } from '../window/browse-view'
@@ -27,9 +28,14 @@ export interface HandlerDeps {
   controlLlama(role: ServerRole, action: 'start' | 'stop' | 'restart'): Promise<ServerStatus>
   openLogFolder(): Promise<void>
   /** Browse preload announced a new document. Returns the settings it should use. */
-  pageHello(hello: { docId: string; url: string }): PageConfig
+  pageHello(hello: { docId: string; url: string }, senderId: number): PageConfig
   /** Browse preload reported images near the viewport. */
-  pageImages(batch: PageImagesBatch): void
+  pageImages(batch: PageImagesBatch, senderId: number): void
+  getTabs(): TabsState
+  /** Opens a new tab with the given URL, or an empty one. */
+  newTab(url: string | null): void
+  closeTab(id: number): void
+  activateTab(id: number): void
   /** Bundled overlay font bytes, or null when the file is missing. */
   getOverlayFont(): Promise<Uint8Array | null>
   getCacheStats(): CacheStats
@@ -64,6 +70,24 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
     deps.setBrowseVisible(!open)
   })
 
+  registrar.handle('tabs:get', () => deps.getTabs())
+  registrar.handle('tabs:new', ({ input }): NavResult => {
+    if (input === undefined || input.trim() === '') {
+      deps.newTab(null)
+      return { ok: true, url: '' }
+    }
+    const result = normalizeAddress(input)
+    if (!result.ok) return result
+    deps.newTab(result.url)
+    return { ok: true, url: result.url }
+  })
+  registrar.handle('tabs:close', ({ id }) => {
+    deps.closeTab(id)
+  })
+  registrar.handle('tabs:activate', ({ id }) => {
+    deps.activateTab(id)
+  })
+
   registrar.handle('config:get', () => deps.getConfig())
 
   registrar.handle('config:update', (patch) => deps.updateConfig(patch))
@@ -75,9 +99,9 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
   registrar.handle('app:open-logs', () => deps.openLogFolder())
 
   // Browse-preload channels. The payloads come from page-adjacent code and are validated by zod in the registrar.
-  registrar.handle('page:hello', (hello) => deps.pageHello(hello))
-  registrar.handle('page:images', (batch) => {
-    deps.pageImages(batch)
+  registrar.handle('page:hello', (hello, event) => deps.pageHello(hello, event.sender.id))
+  registrar.handle('page:images', (batch, event) => {
+    deps.pageImages(batch, event.sender.id)
   })
   registrar.handle('overlay:font', () => deps.getOverlayFont())
   registrar.handle('cache:stats', () => deps.getCacheStats())

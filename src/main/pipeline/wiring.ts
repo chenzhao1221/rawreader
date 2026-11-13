@@ -21,15 +21,11 @@ import { pageConfigFrom, pipelineSettingsFrom } from './settings'
 export interface PipelineWiringOptions {
   getConfig: () => Config
   getServerStatus: (role: ServerRole) => ServerStatus
-  browseWebContents: WebContents
   browseSession: Session
   env: ModelPathEnv
   /** Absolute path of the bundled detection worker (`out/main/detect-worker.js`). */
   workerPath: string
   sendProgress: (progress: PipelineProgress) => void
-  sendPageConfig: (config: PageConfig) => void
-  /** Delivers a finished image to the browse preload. */
-  sendOverlay: (payload: OverlayResult) => void
   /** Persistent result cache, or undefined when it could not be opened. */
   cache?: PipelineCache
   logger: Logger
@@ -37,8 +33,17 @@ export interface PipelineWiringOptions {
 
 export interface PipelineWiring {
   readonly pipeline: Pipeline
-  pageHello(hello: { docId: string; url: string }): PageConfig
-  pageImages(batch: PageImagesBatch): void
+  /** A tab was created: watch its image responses (CDP) and navigations. */
+  attachTab(wc: WebContents): void
+  /** A tab is closing. */
+  detachTab(wc: WebContents): void
+  /**
+   * Only the active tab is translated. Switching pauses the old tab (its page stops reporting) and
+   * restarts the new one, whose page then reports its images again; finished images come from the cache.
+   */
+  setActiveTab(wc: WebContents | null): void
+  pageHello(hello: { docId: string; url: string }, senderId: number): PageConfig
+  pageImages(batch: PageImagesBatch, senderId: number): void
   /** Forget in-memory results after the persistent cache was cleared. */
   clearResults(): void
   onConfigChanged(next: Config): void
@@ -86,14 +91,41 @@ class LazyDetectService implements DetectService {
  * modules next to it.
  */
 export function createPipelineWiring(options: PipelineWiringOptions): PipelineWiring {
-  const { logger, browseWebContents: wc } = options
-  const cdp: CdpCapture = attachCdpCapture(wc, logger)
+  const { logger } = options
   const fetchBytes = createSessionFetch(options.browseSession)
   const clients = createModelClients(options.getConfig, options.getServerStatus)
 
+  interface TabEntry {
+    wc: WebContents
+    cdp: CdpCapture
+    /** Last document the tab's preload announced. */
+    doc: { docId: string; url: string } | null
+  }
+  const tabs = new Map<number, TabEntry>()
+  let activeId: number | null = null
+
+  const send = (wc: WebContents, channel: 'page:config' | 'overlay:result', payload: PageConfig | OverlayResult): void => {
+    if (!wc.isDestroyed()) wc.send(channel, payload)
+  }
+  /** Inactive tabs keep their overlays (and the visibility toggle) but do not scan. */
+  const configFor = (config: Config, id: number): PageConfig => {
+    const page = pageConfigFrom(config)
+    return id === activeId ? page : { ...page, enabled: false }
+  }
+
   const pipeline = new Pipeline({
     settings: () => pipelineSettingsFrom(options.getConfig()),
-    capture: (request) => captureImage({ getLoadedBytes: (url) => cdp.getBody(url), fetchBytes }, request),
+    capture: (request) =>
+      captureImage(
+        {
+          getLoadedBytes: async (url) => {
+            const entry = activeId === null ? undefined : tabs.get(activeId)
+            return entry ? entry.cdp.getBody(url) : null
+          },
+          fetchBytes,
+        },
+        request,
+      ),
     detect: new LazyDetectService(options),
     ocr: clients.ocr,
     translator: clients.translator,
@@ -102,7 +134,12 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
         ocr: options.getServerStatus('ocr'),
         translate: options.getServerStatus('translate'),
       }),
-    onResult: (subscriber, result) => options.sendOverlay(toOverlayPayload(subscriber, result)),
+    onResult: (subscriber, result) => {
+      const payload = toOverlayPayload(subscriber, result)
+      for (const entry of tabs.values()) {
+        if (entry.doc?.docId === subscriber.docId) send(entry.wc, 'overlay:result', payload)
+      }
+    },
     onFailure: (subscriber, failure) => logger.warn(`image ${subscriber.elId} failed: ${failure.code}: ${failure.message}`),
     onProgress: options.sendProgress,
     ...(options.cache ? { cache: options.cache } : {}),
@@ -110,21 +147,55 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
   })
   pipeline.setEnabled(options.getConfig().ui.autoTranslate)
 
-  // Navigation cancels the old page at once; the new page's preload announces its document id.
-  wc.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) pipeline.beginDocument(null)
-  })
-
   return {
     pipeline,
-    pageHello({ docId, url }) {
-      const config = options.getConfig()
-      pipeline.setEnabled(config.ui.autoTranslate)
-      pipeline.beginDocument(docId, url)
-      return pageConfigFrom(config)
+    attachTab(wc) {
+      if (tabs.has(wc.id)) return
+      const entry: TabEntry = { wc, cdp: attachCdpCapture(wc, logger), doc: null }
+      tabs.set(wc.id, entry)
+      // Navigation cancels the old page at once; the new page's preload announces its document id.
+      wc.on('did-start-navigation', (details) => {
+        if (!details.isMainFrame || details.isSameDocument) return
+        entry.doc = null
+        if (wc.id === activeId) pipeline.beginDocument(null)
+      })
     },
-    pageImages(batch) {
-      pipeline.submit(batch)
+    detachTab(wc) {
+      const entry = tabs.get(wc.id)
+      if (!entry) return
+      tabs.delete(wc.id)
+      entry.cdp.dispose()
+      if (activeId === wc.id) {
+        activeId = null
+        pipeline.beginDocument(null)
+      }
+    },
+    setActiveTab(wc) {
+      const nextId = wc && tabs.has(wc.id) ? wc.id : null
+      if (nextId === activeId) return
+      const config = options.getConfig()
+      const previous = activeId === null ? undefined : tabs.get(activeId)
+      activeId = nextId
+      pipeline.beginDocument(null)
+      if (previous) send(previous.wc, 'page:config', configFor(config, previous.wc.id))
+      const next = nextId === null ? undefined : tabs.get(nextId)
+      if (!next) return
+      if (next.doc) pipeline.beginDocument(next.doc.docId, next.doc.url)
+      // enabled false -> true makes the page forget what it reported and report again.
+      send(next.wc, 'page:config', configFor(config, next.wc.id))
+    },
+    pageHello({ docId, url }, senderId) {
+      const config = options.getConfig()
+      const entry = tabs.get(senderId)
+      if (entry) entry.doc = { docId, url }
+      if (senderId === activeId) {
+        pipeline.setEnabled(config.ui.autoTranslate)
+        pipeline.beginDocument(docId, url)
+      }
+      return configFor(config, senderId)
+    },
+    pageImages(batch, senderId) {
+      if (senderId === activeId) pipeline.submit(batch)
     },
     clearResults() {
       pipeline.clearResults()
@@ -132,10 +203,12 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
     onConfigChanged(next) {
       pipeline.setEnabled(next.ui.autoTranslate)
       pipeline.applySettings()
-      options.sendPageConfig(pageConfigFrom(next))
+      for (const entry of tabs.values()) send(entry.wc, 'page:config', configFor(next, entry.wc.id))
     },
     async dispose() {
-      cdp.dispose()
+      for (const entry of tabs.values()) entry.cdp.dispose()
+      tabs.clear()
+      activeId = null
       await pipeline.dispose()
     },
   }

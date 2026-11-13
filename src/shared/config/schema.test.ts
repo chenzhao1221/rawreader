@@ -5,7 +5,7 @@ describe('ConfigSchema defaults', () => {
   it('matches the documented defaults', () => {
     expect(ConfigSchema.parse({})).toEqual({
       schemaVersion: 1,
-      ui: { autoTranslate: false, overlayVisible: true, bubblesOnly: false, lastUrl: null, trayHintShown: false },
+      ui: { autoTranslate: false, overlayVisible: true, bubblesOnly: false, lastUrl: null, openTabs: { urls: [], active: 0 }, trayHintShown: false },
       llama: {
         build: 'b12318',
         backend: 'vulkan',

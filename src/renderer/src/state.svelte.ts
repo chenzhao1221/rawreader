@@ -12,6 +12,7 @@ import type {
   PipelineProgress,
   ServerRole,
   ServerStatus,
+  TabsState,
 } from '../../shared/ipc/contract'
 import { label, zhCN } from './i18n/zh-CN'
 
@@ -19,6 +20,7 @@ export type SettingsTab = 'models' | 'servers' | 'advanced' | 'licenses'
 
 export interface ShellStore {
   browse: BrowseState
+  tabs: TabsState
   config: Config | null
   llama: Record<ServerRole, ServerStatus | null>
   /** Images of the current page: done / total (R5.7). */
@@ -40,6 +42,7 @@ export interface ShellStore {
 
 export const store: ShellStore = $state({
   browse: { url: '', title: '', canGoBack: false, canGoForward: false, loading: false },
+  tabs: { tabs: [], activeId: null },
   config: null,
   llama: { ocr: null, translate: null },
   progress: { total: 0, done: 0, failed: 0, active: 0 },
@@ -65,12 +68,16 @@ function showMessage(text: string): void {
 }
 
 /** Subscribes to main-process events and loads the initial state. Returns a cleanup function. */
-export function initStore(): () => void {
+export function initStore(onFocusAddress: () => void = () => {}): () => void {
   const api = window.rawreader
   const unsubscribe = [
     api.on('browse:state', (state) => {
       store.browse = state
     }),
+    api.on('tabs:state', (state) => {
+      store.tabs = state
+    }),
+    api.on('shell:focus-address', () => onFocusAddress()),
     api.on('config:changed', (config) => {
       store.config = config
     }),
@@ -91,6 +98,9 @@ export function initStore(): () => void {
 
   void api.invoke('config:get').then((result) => {
     if (result.ok) store.config = result.value
+  })
+  void api.invoke('tabs:get').then((result) => {
+    if (result.ok) store.tabs = result.value
   })
   void api.invoke('llama:status').then((result) => {
     if (!result.ok) return
@@ -121,6 +131,18 @@ export async function navigate(input: string): Promise<string | null> {
 
 export function go(action: 'back' | 'forward' | 'reload' | 'stop'): void {
   void window.rawreader.invoke('browse:go', { action })
+}
+
+export function newTab(): void {
+  void window.rawreader.invoke('tabs:new', {})
+}
+
+export function closeTab(id: number): void {
+  void window.rawreader.invoke('tabs:close', { id })
+}
+
+export function activateTab(id: number): void {
+  void window.rawreader.invoke('tabs:activate', { id })
 }
 
 export function openLogs(): void {

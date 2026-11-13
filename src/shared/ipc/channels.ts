@@ -10,6 +10,10 @@ export const INVOKE_CHANNELS = [
   'browse:navigate',
   'browse:go',
   'shell:panel-visibility',
+  'tabs:get',
+  'tabs:new',
+  'tabs:close',
+  'tabs:activate',
   'config:get',
   'config:update',
   'llama:status',
@@ -35,6 +39,8 @@ export const INVOKE_CHANNELS = [
 /** Main to renderer push events (webContents.send). */
 export const EVENT_CHANNELS = [
   'browse:state',
+  'tabs:state',
+  'shell:focus-address',
   'config:changed',
   'llama:status',
   'shell:notice',
