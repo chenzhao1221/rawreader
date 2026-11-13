@@ -1,0 +1,23 @@
+import type { OverlayResult } from '../../shared/ipc/contract'
+import type { ImageResult, Subscriber } from './types'
+
+/**
+ * Builds the message the browse preload draws from. Only units with a usable
+ * translation are sent: failed, empty and echoed units stay out. The message
+ * carries no image bytes and no source text, so nothing sensitive crosses to the page-adjacent side.
+ */
+export function toOverlayPayload(subscriber: Subscriber, result: ImageResult): OverlayResult {
+  return {
+    docId: subscriber.docId,
+    elId: subscriber.elId,
+    width: Math.max(1, Math.round(result.width)),
+    height: Math.max(1, Math.round(result.height)),
+    units: result.units
+      .filter((unit) => unit.status === 'ok' && unit.translation.trim().length > 0)
+      .map((unit) => ({
+        kind: unit.kind,
+        box: { x1: unit.drawBox.x1, y1: unit.drawBox.y1, x2: unit.drawBox.x2, y2: unit.drawBox.y2 },
+        text: unit.translation.trim().slice(0, 2000),
+      })),
+  }
+}
