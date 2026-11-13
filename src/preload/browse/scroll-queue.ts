@@ -24,6 +24,15 @@ const BATCH_DELAY_MS = 80
 const BATCH_MAX_ITEMS = 50
 /** Minimum gap between two scroll/resize driven range checks. */
 const SWEEP_DELAY_MS = 100
+/** Re-measure interval while images have no rendered box yet, and how many times in a row we try. */
+const LAYOUT_RETRY_MS = 500
+const LAYOUT_RETRY_MAX = 40
+
+/** An image that is within range of the viewport right now, with its real distance in CSS pixels. */
+interface InRange {
+  img: HTMLImageElement
+  distance: number
+}
 
 /**
  * Finds `<img>` elements, waits until they come near the viewport and reports
@@ -47,7 +56,10 @@ export class ScrollQueue {
   private pendingReady: (() => void) | null = null
   private scrollListener: (() => void) | null = null
   private sweepTimer: ReturnType<typeof setTimeout> | null = null
-
+  /** Set during a scan when an image had no measurable box; triggers the layout retry timer. */
+  private layoutPending = false
+  private layoutTimer: ReturnType<typeof setTimeout> | null = null
+  private layoutRetries = 0
   constructor(private readonly options: ScrollQueueOptions) {
     this.doc = options.doc ?? document
     this.batcher = new Batcher<PageImage>({
@@ -84,12 +96,18 @@ export class ScrollQueue {
     }
     this.observer = new IntersectionObserver(
       (entries) => {
+        // Nearest first, and only elements that have a rendered box (see measure()).
+        const hits: InRange[] = []
+        this.layoutPending = false
         for (const entry of entries) {
           if (entry.isIntersecting && entry.target instanceof HTMLImageElement) {
-            this.observer?.unobserve(entry.target)
-            this.enqueue(entry.target)
+            const distance = this.measure(entry.target)
+            if (distance === null) this.layoutPending = true
+            else hits.push({ img: entry.target, distance })
           }
         }
+        this.enqueueNearestFirst(hits)
+        if (this.layoutPending) this.scheduleLayoutRetry()
       },
       { root: null, rootMargin: `${config.rootMarginPx}px 0px`, threshold: 0 },
     )
@@ -137,13 +155,18 @@ export class ScrollQueue {
   }
 
   private scheduleSweep(): void {
+    // The user moved the viewport: measure again and allow fresh layout retries.
+    this.layoutRetries = 0
     if (this.sweepTimer !== null) return
     this.sweepTimer = setTimeout(() => {
       this.sweepTimer = null
       this.scan()
     }, SWEEP_DELAY_MS)
   }
-  /** Stops observing and drops queued, unsent work. Already reported images are not recalled here. */
+
+  /**
+   * Stops observing and drops queued, unsent work. Already reported images are not recalled here.
+   */
   stop(): void {
     if (this.pendingReady) {
       this.doc.removeEventListener('DOMContentLoaded', this.pendingReady)
@@ -158,7 +181,14 @@ export class ScrollQueue {
     if (this.sweepTimer !== null) {
       clearTimeout(this.sweepTimer)
       this.sweepTimer = null
-    }    this.observer?.disconnect()
+    }
+    if (this.layoutTimer !== null) {
+      clearTimeout(this.layoutTimer)
+      this.layoutTimer = null
+    }
+    this.layoutRetries = 0
+    this.layoutPending = false
+    this.observer?.disconnect()
     this.observer = null
     this.mutationObserver?.disconnect()
     this.mutationObserver = null
@@ -170,9 +200,52 @@ export class ScrollQueue {
     this.reported = new WeakMap()
   }
 
+  /**
+   * Visits every image and reports the ones within range, nearest the viewport first. Collecting before
+   * enqueueing matters: a long chapter can have more in-range images than one batch holds, and DOM order
+   * would otherwise decide which batch goes out first.
+   */
   private scan(): void {
     if (!this.observer) return
-    this.doc.querySelectorAll('img').forEach((img) => this.observe(img))
+    this.layoutPending = false
+    const inRange: InRange[] = []
+    this.doc.querySelectorAll('img').forEach((img) => {
+      const hit = this.observe(img)
+      if (hit) inRange.push(hit)
+    })
+    this.enqueueNearestFirst(inRange)
+    if (this.layoutPending) this.scheduleLayoutRetry()
+  }
+
+  /**
+   * Distance of an image to the current viewport, or `null` while that cannot be known: the image has no
+   * rendered box (lazy-load placeholder, `display: none`, not laid out yet) or the viewport has no height.
+   * Such images must not be reported as distance 0, because that is indistinguishable from "on screen" and
+   * would put every unlaid image of the chapter in the first batch. They stay unreported and are measured
+   * again on scroll, resize, load and a short layout retry timer.
+   */
+  private measure(img: HTMLImageElement): number | null {
+    const rect = img.getBoundingClientRect()
+    const viewportHeight = this.doc.defaultView?.innerHeight ?? 0
+    if (viewportHeight <= 0 || !(rect.bottom - rect.top > 0)) return null
+    return Math.max(0, Math.round(distanceToViewport(rect.top, rect.bottom, viewportHeight)))
+  }
+
+  private scheduleLayoutRetry(): void {
+    if (this.layoutTimer !== null || this.layoutRetries >= LAYOUT_RETRY_MAX) return
+    this.layoutRetries++
+    this.layoutTimer = setTimeout(() => {
+      this.layoutTimer = null
+      this.scan()
+    }, LAYOUT_RETRY_MS)
+  }
+
+  private enqueueNearestFirst(list: InRange[]): void {
+    list.sort((a, b) => a.distance - b.distance)
+    for (const { img, distance } of list) {
+      this.observer?.unobserve(img)
+      this.enqueue(img, distance)
+    }
   }
 
   private urlOf(img: HTMLImageElement): string {
@@ -188,44 +261,47 @@ export class ScrollQueue {
     )
   }
 
-  private observe(img: HTMLImageElement): void {
+  /** Returns the image with its current distance when it should be reported now, otherwise `null`. */
+  private observe(img: HTMLImageElement): InRange | null {
     const config = this.config
-    if (!config?.enabled || !this.observer) return
+    if (!config?.enabled || !this.observer) return null
     const url = this.urlOf(img)
-    if (!url || !isReportableUrl(url)) return
-    if (this.reported.get(img) === url) return
-    if (this.observed.get(img) === url) {
-      this.enqueueIfInRange(img)
-      return
-    }
+    if (!url || !isReportableUrl(url)) return null
+    if (this.reported.get(img) === url) return null
+    if (this.observed.get(img) === url) return this.inRange(img)
 
     if (img.complete && img.naturalWidth > 0) {
-      if (!qualifiesBySize(img.naturalWidth, img.naturalHeight, config.minImageSize)) return
+      if (!qualifiesBySize(img.naturalWidth, img.naturalHeight, config.minImageSize)) return null
       this.observed.set(img, url)
       this.observer.observe(img)
-      this.enqueueIfInRange(img)
+      return this.inRange(img)
     } else if (!this.waiting.has(img)) {
       this.waiting.add(img)
       img.addEventListener(
         'load',
         () => {
           this.waiting.delete(img)
-          this.observe(img)
+          this.layoutPending = false
+          const hit = this.observe(img)
+          if (hit) this.enqueueNearestFirst([hit])
+          if (this.layoutPending) this.scheduleLayoutRetry()
         },
         { once: true },
       )
     }
+    return null
   }
 
-  /** Geometry path: enqueue right away when the image is already within ootMarginPx of the viewport. */
-  private enqueueIfInRange(img: HTMLImageElement): void {
+  /** Geometry path: the image with its distance when it is already within rootMarginPx of the viewport. */
+  private inRange(img: HTMLImageElement): InRange | null {
     const config = this.config
-    if (!config?.enabled) return
-    const rect = img.getBoundingClientRect()
-    const viewportHeight = this.doc.defaultView?.innerHeight ?? 0
-    if (distanceToViewport(rect.top, rect.bottom, viewportHeight) > config.rootMarginPx) return
-    this.observer?.unobserve(img)
-    this.enqueue(img)
+    if (!config?.enabled) return null
+    const distance = this.measure(img)
+    if (distance === null) {
+      this.layoutPending = true
+      return null
+    }
+    return distance > config.rootMarginPx ? null : { img, distance }
   }
 
   private elementId(img: HTMLImageElement): string {
@@ -237,21 +313,13 @@ export class ScrollQueue {
     return id
   }
 
-  private enqueue(img: HTMLImageElement): void {
+  private enqueue(img: HTMLImageElement, distance: number): void {
     const url = this.urlOf(img)
     if (!url || !isReportableUrl(url)) return
     const elId = this.elementId(img)
     this.reported.set(img, url)
     if (!this.guard.tryEnqueue(elId, url)) return
 
-    const rect = img.getBoundingClientRect()
-    const viewportHeight = this.doc.defaultView?.innerHeight ?? 0
-    this.batcher.add({
-      elId,
-      url,
-      naturalW: img.naturalWidth,
-      naturalH: img.naturalHeight,
-      distance: Math.max(0, Math.round(distanceToViewport(rect.top, rect.bottom, viewportHeight))),
-    })
+    this.batcher.add({ elId, url, naturalW: img.naturalWidth, naturalH: img.naturalHeight, distance })
   }
 }
