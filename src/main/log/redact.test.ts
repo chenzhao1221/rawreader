@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { hashPrefix, redactText, redactUrl, redactValue } from './redact'
 
 describe('redactUrl', () => {
-  it('drops query string and fragment', () => {
-    expect(redactUrl('https://cdn.example.com/a/b.jpg?token=abc&x=1#frag')).toBe(
-      'https://cdn.example.com/a/b.jpg?[redacted]',
-    )
+  it('keeps the origin only: no path, query string or fragment', () => {
+    expect(redactUrl('https://cdn.example.com/a/b.jpg?token=abc&x=1#frag')).toBe('https://cdn.example.com/[redacted]')
+    expect(redactUrl('https://example.com/img/1.png')).toBe('https://example.com/[redacted]')
   })
 
-  it('leaves clean URLs unchanged', () => {
-    expect(redactUrl('https://example.com/img/1.png')).toBe('https://example.com/img/1.png')
+  it('leaves a bare origin unchanged', () => {
+    expect(redactUrl('https://example.com/')).toBe('https://example.com/')
+    expect(redactUrl('http://localhost:3000')).toBe('http://localhost:3000/')
   })
 
   it('drops userinfo', () => {
@@ -26,7 +26,7 @@ describe('redactUrl', () => {
 describe('redactText', () => {
   it('redacts URLs embedded in a sentence', () => {
     const out = redactText('Fetching https://img.example.com/p/1.webp?sig=SECRET123&e=9 now')
-    expect(out).toBe('Fetching https://img.example.com/p/1.webp?[redacted] now')
+    expect(out).toBe('Fetching https://img.example.com/[redacted] now')
     expect(out).not.toContain('SECRET123')
   })
 
@@ -80,13 +80,13 @@ describe('redactValue', () => {
     expect(out.headers.Cookie).toBe('[redacted]')
     expect(out.headers.Authorization).toBe('[redacted]')
     expect(out.headers.Accept).toBe('image/*')
-    expect(out.url).toBe('https://x.example/a.jpg?[redacted]')
-    expect(out.list[0]).toBe('https://y.example/b.png?[redacted]')
+    expect(out.url).toBe('https://x.example/[redacted]')
+    expect(out.list[0]).toBe('https://y.example/[redacted]')
   })
 
   it('serialises errors with redacted messages', () => {
     const out = redactValue(new Error('failed https://a.example/p?token=1')) as Record<string, string>
-    expect(out['message']).toBe('failed https://a.example/p?[redacted]')
+    expect(out['message']).toBe('failed https://a.example/[redacted]')
   })
 
   it('summarises binary buffers', () => {

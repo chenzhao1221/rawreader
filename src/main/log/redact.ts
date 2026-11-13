@@ -2,8 +2,8 @@
  * Pure redaction helpers for log output. Nothing here imports Electron or Node
  * APIs, so Vitest can test it directly.
  *
- * Rules (product.md): never log cookies, auth headers, or full image URLs with
- * query strings. Query strings and fragments are always dropped from URLs.
+ * Rules (product.md): never log cookies, auth headers, or page / image URLs beyond their origin.
+ * Paths, query strings and fragments are always dropped from URLs.
  */
 
 const REDACTED = '[redacted]'
@@ -34,9 +34,9 @@ const BEARER_PATTERN = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{6,}/g
 const QUERY_PARAM_SECRET_PATTERN = /([?&;](?:token|access_token|key|api_key|apikey|sig|signature|auth|password)=)[^&\s"']*/gi
 
 /**
- * Removes the query string and fragment from a URL. Userinfo (user:password@)
- * is dropped too. A marker shows that something was removed. Input that does
- * not parse as a URL is returned through `redactText`.
+ * Reduces a URL to its origin. Path, query string, fragment and userinfo are dropped, because a path
+ * identifies the page or image being read (a chapter URL is browsing history). A marker shows that
+ * something was removed. Input that does not parse as a URL is returned through `redactText`.
  */
 export function redactUrl(url: string): string {
   let parsed: URL
@@ -45,9 +45,14 @@ export function redactUrl(url: string): string {
   } catch {
     return redactText(url)
   }
-  const hadExtra = parsed.search !== '' || parsed.hash !== '' || parsed.username !== '' || parsed.password !== ''
-  const base = `${parsed.protocol}//${parsed.host}${parsed.pathname}`
-  return hadExtra ? `${base}?${REDACTED}` : base
+  const hadExtra =
+    (parsed.pathname !== '/' && parsed.pathname !== '') ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    parsed.username !== '' ||
+    parsed.password !== ''
+  const origin = `${parsed.protocol}//${parsed.host}/`
+  return hadExtra ? `${origin}${REDACTED}` : origin
 }
 
 /** Redacts URLs, data URLs, cookie/authorization headers and bearer tokens inside free text. */
