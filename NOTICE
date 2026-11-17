@@ -1,0 +1,37 @@
+RawReader
+Copyright (C) 2026 the RawReader authors
+
+This repository is licensed under the GNU Affero General Public License,
+version 3 (AGPL-3.0). See LICENSE. Third-party components, their licences
+and the full list of ported files are in THIRD_PARTY_NOTICES.md.
+
+Code derived from Libre Manga Translator
+----------------------------------------
+
+Parts of the desktop application (see the per-file headers and
+THIRD_PARTY_NOTICES.md) and the browser extension under extension/ are
+derived from Libre Manga Translator (LMT):
+
+  Source:    https://github.com/mardhianto/libre-manga-translator
+  Commit:    1ddddc761ff18e6155a071ad3a3f603a836d7136 (zh-cn branch, based on 1.0.4)
+  Licence:   GNU Affero General Public License v3.0 or later
+             (AGPL-3.0-or-later, from v1.0.0 Stable onward)
+  Copyright: (C) 2026 Libre Manga Translator
+
+LMT code is used under the terms of AGPL-3.0-or-later, choosing version 3.
+The modified files and the combined work are distributed under AGPL-3.0,
+the licence of this repository. LMT's copyright notices are kept; every
+derived file carries a header naming its LMT source file and stating that
+it was modified by RawReader.
+
+Evaluated, not used: ImageTrans Chrome extension
+------------------------------------------------
+
+The ImageTrans Chrome extension (https://github.com/xulihang/ImageTrans_chrome_extension,
+GPL-3.0) was evaluated as a base for the browser extension and not chosen.
+No ImageTrans code, key or asset is included in this repository. GPL-3.0
+code may be combined into an AGPL-3.0 work (section 13 of both licences);
+if any ImageTrans code is added later, the combined work stays AGPL-3.0,
+the ImageTrans copyright and GPL-3.0 notices must be kept in the affected
+files, and the component must be added to this file and to
+THIRD_PARTY_NOTICES.md in the same change.
