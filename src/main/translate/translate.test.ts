@@ -307,3 +307,19 @@ describe('previous image context in the batch prompt', () => {
     expect(parseBatchOutput('前文：当然了。\n1. 好', 1)).toBeNull()
   })
 })
+
+describe('series background in prompts', () => {
+  it('leaves the prompts unchanged without background', async () => {
+    const { buildBatchPrompt, buildIndexPrompt } = await import('./prompts')
+    expect(buildIndexPrompt('x', 'zh-Hans', [], [])).toBe(buildIndexPrompt('x', 'zh-Hans'))
+    expect(buildBatchPrompt(['a', 'b'], 'zh-Hans', [], [])).toBe(buildBatchPrompt(['a', 'b'], 'zh-Hans'))
+  })
+
+  it('adds the background to both prompt shapes', async () => {
+    const { buildBatchPrompt, buildIndexPrompt, buildSeriesBackground } = await import('./prompts')
+    const background = buildSeriesBackground({ seriesName: 'S', summary: '', dictionary: 'a=b' })
+    expect(background).toEqual(['作品：S', '术语表（按此译法）：a=b'])
+    expect(buildIndexPrompt('x', 'zh-Hans', [], background)).toContain('作品：S')
+    expect(buildBatchPrompt(['a', 'b'], 'zh-Hans', [], background)).toContain('术语表（按此译法）：a=b')
+  })
+})

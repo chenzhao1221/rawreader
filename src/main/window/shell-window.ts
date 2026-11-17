@@ -14,7 +14,7 @@ export interface ShellWindow {
 }
 
 /** Creates the main window that hosts the shell UI (toolbar, status bar). */
-export function createShellWindow(iconPath?: string, theme: ThemeName = 'night'): ShellWindow {
+export function createShellWindow(iconPath?: string, theme: ThemeName = 'night', options: { startHidden?: boolean } = {}): ShellWindow {
   const chrome = WINDOW_CHROME[theme]
   const win = new BrowserWindow({
     width: 1280,
@@ -39,7 +39,8 @@ export function createShellWindow(iconPath?: string, theme: ThemeName = 'night')
     },
   })
 
-  win.once('ready-to-show', () => win.show())
+  // Start-hidden (Chrome extension bridge in the tray): the window stays hidden until the tray's "show" item.
+  if (!options.startHidden) win.once('ready-to-show', () => win.show())
   win.removeMenu()
 
   const wc = win.webContents

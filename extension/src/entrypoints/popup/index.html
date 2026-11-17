@@ -1,0 +1,32 @@
+<!-- Portions ported from libre-manga-translator src/entrypoints/popup/index.html @ 1ddddc761ff18e6155a071ad3a3f603a836d7136,
+     AGPL-3.0-or-later, (C) 2026 Libre Manga Translator; modified by RawReader. -->
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RawReader</title>
+    <meta name="manifest.type" content="browser_action" />
+    <style>
+      html,
+      body {
+        width: 360px;
+        height: 540px;
+        min-width: 360px;
+        min-height: 540px;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background-color: #05040b;
+      }
+      #app {
+        width: 360px;
+        height: 540px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

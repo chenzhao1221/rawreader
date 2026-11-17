@@ -60,3 +60,16 @@ describe('model and prompt identity', () => {
     expect(id).toMatchObject({ lang: 'zh-Hans', detectorId: 'd.onnx:7', ocrModelId: 'o.gguf:7', mtModelId: 'Index-Translate-2B.Q4_K_M.gguf:missing' })
   })
 })
+describe('buildCacheKey with series context', () => {
+  const identity: CacheIdentity = { lang: 'zh-Hans', detectorId: 'd:1', ocrModelId: 'o:1', mtModelId: 'm:1', promptVersion: 'p1' }
+
+  it('is unchanged without a context hash, so bridge and desktop share entries', () => {
+    expect(buildCacheKey('abc', identity)).toBe('abc|zh-Hans|d:1|o:1|m:1|p1')
+    expect(buildCacheKey('abc', identity, undefined)).toBe(buildCacheKey('abc', identity))
+  })
+
+  it('appends the context hash as its own part', () => {
+    expect(buildCacheKey('abc', identity, 'h1')).toBe('abc|zh-Hans|d:1|o:1|m:1|p1|ctx:h1')
+    expect(buildCacheKey('abc', identity, 'h1')).not.toBe(buildCacheKey('abc', identity, 'h2'))
+  })
+})

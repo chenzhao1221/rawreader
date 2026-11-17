@@ -2,6 +2,8 @@ import { performance } from 'node:perf_hooks'
 import PQueue from 'p-queue'
 import type { PageImagesBatch, PipelineProgress } from '../../shared/ipc/contract'
 import type { CaptureRequest, CaptureResult } from '../capture/capture'
+import { sha256Hex } from '../capture/hash'
+import type { Bbox } from '../detect/types'
 import type { DetectService } from '../detect/service'
 import type { DetectOk } from '../detect/protocol'
 import type { Logger } from '../log/log'
@@ -11,7 +13,7 @@ import type { OcrResult } from '../ocr/client'
 import type { TranslateRequest, TranslateResult } from '../translate/client'
 import { ImageRegistry } from './state'
 import type { Completion } from './state'
-import type { ImageFailure, ImageResult, PageImage, StageTimings, Subscriber, UnitResult } from './types'
+import type { ImageFailure, ImageResult, PageImage, StageTimings, Subscriber, TranslateContext, UnitResult } from './types'
 
 /** Settings the scheduler reads each time it needs them. */
 export interface PipelineSettings {
@@ -33,8 +35,9 @@ export interface PipelineSettings {
 
 /** Persistent result store keyed by image content hash (the identity part of the key is the implementation's concern). */
 export interface PipelineCache {
-  lookup(hash: string): Pick<ImageResult, 'width' | 'height' | 'units'> | null
-  store(hash: string, result: ImageResult): void
+  /** `variant` joins the cache identity (a hash of the series context); absent for plain requests. */
+  lookup(hash: string, variant?: string): Pick<ImageResult, 'width' | 'height' | 'units'> | null
+  store(hash: string, result: ImageResult, variant?: string): void
 }
 
 export interface PipelineDeps {
@@ -49,8 +52,11 @@ export interface PipelineDeps {
       sources: readonly string[],
       signal?: AbortSignal,
       previous?: readonly { source: string; translation: string }[],
+      background?: readonly string[],
     ): Promise<(string | null)[]>
   }
+  /** Crops OCR images for caller-supplied boxes (bridge `boxes`), so detection is skipped. */
+  cropBoxes?(bytes: Uint8Array, boxes: readonly Bbox[], padding: number): Promise<{ width: number; height: number; units: DetectOk['units'] }>
   /** Gemini one-stop mode: reads and translates crops itself (used when `settings().engine` is 'gemini'). */
   vision?: {
     readAndTranslate(crops: readonly (Uint8Array | null)[], signal?: AbortSignal): Promise<({ source: string; translation: string } | null)[]>
@@ -83,6 +89,42 @@ class StageFailure extends Error {
     super(message)
     this.name = 'StageFailure'
   }
+}
+
+/** What a stage run needs from its owner: the signal that aborts queued and running work. */
+interface Scope {
+  controller: AbortController
+}
+
+/** Failure of `translateBytes`: `code` is `CANCELLED`, a stage code (`SERVER_NOT_READY`, `DETECT_FAILED` ...) or `INTERNAL`. */
+export class PipelineError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'PipelineError'
+  }
+}
+
+/** Options of `Pipeline.translateBytes`. */
+export interface TranslateBytesOptions {
+  /** Larger runs first. Default 0. */
+  priority?: number
+  /** Aborts this caller's wait; the work stops when no caller is left. */
+  signal?: AbortSignal
+  /** Series background for the prompt. Results with a context are cached under their own identity. */
+  context?: TranslateContext
+  /** Caller-supplied regions: detection is skipped and the result is not cached. */
+  boxes?: readonly Bbox[]
+}
+
+export type TranslateBytesResult = ImageResult & { cached: boolean }
+
+interface BytesRun {
+  promise: Promise<TranslateBytesResult>
+  controller: AbortController
+  waiters: number
 }
 
 interface DocState {
@@ -125,6 +167,8 @@ export class Pipeline {
   /** Aborted by `setEnabled(false)`: stops queued tasks, never running ones. */
   private queueController = new AbortController()
   private disposed = false
+  /** In-flight `translateBytes` runs by `hash|contextHash`, so equal requests share one run. */
+  private readonly bytesRuns = new Map<string, BytesRun>()
   private idleWaiters: Array<() => void> = []
 
   constructor(private readonly deps: PipelineDeps) {
@@ -207,6 +251,96 @@ export class Pipeline {
     return accepted
   }
 
+  /**
+   * Bytes in, result out: the entry for callers that already hold the image (the Chrome extension bridge).
+   * Runs hash -> cache -> detect -> OCR -> translate -> cache on the same stage queues and settings as the
+   * browse view. It touches no document, no `submit` state and no delivery, and the auto-translate switch does
+   * not gate it. Callers with the same bytes and context share one run.
+   */
+  translateBytes(bytes: Uint8Array, options: TranslateBytesOptions = {}): Promise<TranslateBytesResult> {
+    if (this.disposed) return Promise.reject(new PipelineError('CANCELLED', 'pipeline is shut down'))
+    const signal = options.signal
+    if (signal?.aborted) return Promise.reject(new PipelineError('CANCELLED', 'cancelled'))
+    const hash = sha256Hex(bytes)
+    // Caller boxes make a one-off result: not shared, not cached.
+    const key = options.boxes ? null : `${hash}|${options.context?.hash ?? ''}`
+    let run = key ? this.bytesRuns.get(key) : undefined
+    if (!run) {
+      const controller = new AbortController()
+      const created = { controller, waiters: 0 } as BytesRun
+      created.promise = this.runBytes(controller, bytes, hash, options).finally(() => {
+        if (key && this.bytesRuns.get(key) === created) this.bytesRuns.delete(key)
+      })
+      // The run's own failures are delivered to the waiters below; this keeps an abandoned run from being unhandled.
+      created.promise.catch(() => {})
+      if (key) this.bytesRuns.set(key, created)
+      run = created
+    }
+    const shared = run
+    shared.waiters++
+    return new Promise<TranslateBytesResult>((resolve, reject) => {
+      let settled = false
+      const leave = (): void => {
+        if (settled) return
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        shared.waiters--
+      }
+      const onAbort = (): void => {
+        leave()
+        if (shared.waiters === 0) shared.controller.abort(new Cancelled())
+        reject(new PipelineError('CANCELLED', 'cancelled'))
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      shared.promise.then(
+        (value) => {
+          if (settled) return
+          leave()
+          resolve(value)
+        },
+        (error: unknown) => {
+          if (settled) return
+          leave()
+          const failure = toFailure(error)
+          reject(new PipelineError(failure.code, failure.message))
+        },
+      )
+    })
+  }
+
+  private async runBytes(
+    controller: AbortController,
+    bytes: Uint8Array,
+    hash: string,
+    options: TranslateBytesOptions,
+  ): Promise<TranslateBytesResult> {
+    const started = performance.now()
+    const timings: StageTimings = { captureMs: 0, detectMs: 0, ocrMs: 0, translateMs: 0 }
+    const scope: Scope = { controller }
+    const variant = options.context?.hash
+    const useCache = !options.boxes
+    const settings = this.deps.settings()
+
+    let stored = useCache ? this.lookupCache(hash, variant) : null
+    if (stored && hasSkippedUnits(stored) && !settings.bubblesOnly) stored = null
+    if (stored) {
+      this.deps.logger.info(`bridge image ${hashPrefix(hash)} done (cache hit): units=${stored.units.length}`)
+      return { hash, width: stored.width, height: stored.height, units: stored.units, timings, captureSource: 'bridge', cached: true }
+    }
+
+    const image = { bytes, hash, mime: '', source: 'bridge' as const }
+    const result = await this.process(scope, image, -(options.priority ?? 0), timings, [], {
+      ...(options.boxes ? { boxes: options.boxes } : {}),
+      ...(options.context ? { background: options.context.background } : {}),
+    })
+    if (useCache) this.storeCache(hash, result, variant)
+    this.deps.logger.info(
+      `bridge image ${hashPrefix(hash)} done: units=${result.units.length} detect=${Math.round(timings.detectMs)}ms ` +
+        `ocr=${Math.round(timings.ocrMs)}ms translate=${Math.round(timings.translateMs)}ms total=${Math.round(performance.now() - started)}ms`,
+    )
+    return { ...result, cached: false }
+  }
+
   getProgress(): PipelineProgress {
     const doc = this.doc
     return doc
@@ -223,6 +357,7 @@ export class Pipeline {
   async dispose(): Promise<void> {
     this.disposed = true
     this.beginDocument(null)
+    for (const run of this.bytesRuns.values()) run.controller.abort(new Cancelled())
     for (const queue of Object.values(this.queues)) queue.clear()
     await this.deps.detect.dispose()
   }
@@ -281,7 +416,7 @@ export class Pipeline {
             captureSource: captured.image.source,
           }
         } else {
-          result = await this.process(doc, captured.image, image.distance, timings, image.order)
+          result = await this.process(doc, captured.image, image.distance, timings, this.previousTail(doc, image.order))
           this.storeCache(hash, result)
         }
       } catch (error) {
@@ -305,18 +440,18 @@ export class Pipeline {
     }
   }
 
-  private lookupCache(hash: string): ReturnType<PipelineCache['lookup']> {
+  private lookupCache(hash: string, variant?: string): ReturnType<PipelineCache['lookup']> {
     try {
-      return this.deps.cache?.lookup(hash) ?? null
+      return this.deps.cache?.lookup(hash, ...(variant ? [variant] : [])) ?? null
     } catch (error) {
       this.deps.logger.warn(`Cache lookup failed: ${error instanceof Error ? error.message : String(error)}`)
       return null
     }
   }
 
-  private storeCache(hash: string, result: ImageResult): void {
+  private storeCache(hash: string, result: ImageResult, variant?: string): void {
     try {
-      this.deps.cache?.store(hash, result)
+      this.deps.cache?.store(hash, result, ...(variant ? [variant] : []))
     } catch (error) {
       this.deps.logger.warn(`Cache store failed: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -361,28 +496,38 @@ export class Pipeline {
     }
   }
 
-  /** detect -> OCR -> translate for one set of bytes. */
+  /** detect -> OCR -> translate for one set of bytes. `extras` is only set by `translateBytes`. */
   private async process(
-    doc: DocState,
-    image: { bytes: Uint8Array; hash: string; mime: string; source: 'cdp' | 'fetch' | 'data-url' },
+    doc: Scope,
+    image: { bytes: Uint8Array; hash: string; mime: string; source: ImageResult['captureSource'] },
     distance: number,
     timings: StageTimings,
-    order?: number,
+    previous: readonly { source: string; translation: string }[] = [],
+    extras: { boxes?: readonly Bbox[]; background?: readonly string[] } = {},
   ): Promise<ImageResult> {
     const settings = this.deps.settings()
 
+    let found: DetectOk
     const detectStart = performance.now()
-    const detected = await this.stage(doc, 'detect', distance, () =>
-      this.deps.detect.detect({
-        bytes: image.bytes,
-        ocrPadding: settings.ocrPadding,
-        readingDirection: settings.readingDirection,
-        maxBoxImageCoverage: settings.maxBoxImageCoverage,
-      }),
-    )
+    if (extras.boxes) {
+      // Caller-supplied regions: no detection, just crop them for OCR.
+      const crop = this.deps.cropBoxes
+      if (!crop) throw new StageFailure('CROP_UNAVAILABLE', 'Cropping caller boxes is not available')
+      const cropped = await this.stage(doc, 'detect', distance, () => crop(image.bytes, extras.boxes as readonly Bbox[], settings.ocrPadding))
+      found = { ...cropped, tiled: false, tileCount: 1, timings: { decodeMs: 0, inferMs: 0, cropMs: 0 } }
+    } else {
+      const detected = await this.stage(doc, 'detect', distance, () =>
+        this.deps.detect.detect({
+          bytes: image.bytes,
+          ocrPadding: settings.ocrPadding,
+          readingDirection: settings.readingDirection,
+          maxBoxImageCoverage: settings.maxBoxImageCoverage,
+        }),
+      )
+      if (!detected.ok) throw new StageFailure(detected.error.code, detected.error.message)
+      found = detected.result
+    }
     timings.detectMs = performance.now() - detectStart
-    if (!detected.ok) throw new StageFailure(detected.error.code, detected.error.message)
-    const found: DetectOk = detected.result
     const units = found.units.slice(0, settings.maxUnitsPerImage)
 
     const base = {
@@ -420,7 +565,7 @@ export class Pipeline {
       watermark = texts.map((t) => !t.failed && looksLikeWatermark(t.text))
       outcomes = answers.map((a) => ({ translation: a?.translation ?? '', failed: a !== null && a.source !== '' && a.translation === '', echo: false }))
     } else {
-      ;({ texts, watermark, outcomes } = await this.readAndTranslateLocally(doc, work, distance, timings, this.previousTail(doc, order)))
+      ;({ texts, watermark, outcomes } = await this.readAndTranslateLocally(doc, work, distance, timings, previous, extras.background))
     }
 
     const workResults: UnitResult[] = work.map((unit, index) => {
@@ -450,11 +595,12 @@ export class Pipeline {
 
   /** Local path: OCR each crop on the OCR server, then translate (whole image first, then bubble by bubble). */
   private async readAndTranslateLocally(
-    doc: DocState,
+    doc: Scope,
     work: readonly DetectOk['units'][number][],
     distance: number,
     timings: StageTimings,
     previous: readonly { source: string; translation: string }[] = [],
+    background: readonly string[] = [],
   ): Promise<{
     texts: { text: string; failed: boolean }[]
     watermark: boolean[]
@@ -483,7 +629,9 @@ export class Pipeline {
     const batch = this.deps.translator.translateBatch
     const batched: readonly (string | null)[] =
       batch && filled >= 2
-        ? await this.stage(doc, 'translate', distance, () => batch(sources, doc.controller.signal, previous))
+        ? await this.stage(doc, 'translate', distance, () =>
+            background.length > 0 ? batch(sources, doc.controller.signal, previous, background) : batch(sources, doc.controller.signal, previous),
+          )
         : []
     const outcomes = await Promise.all(
       work.map(async (_unit, index): Promise<{ translation: string; failed: boolean; echo: boolean }> => {
@@ -491,7 +639,7 @@ export class Pipeline {
         const fromBatch = batched[index]
         if (typeof fromBatch === 'string' && fromBatch.length > 0) return { translation: fromBatch, failed: false, echo: false }
         const result = await this.stage(doc, 'translate', distance, () =>
-          this.deps.translator.translate({ sources, index, signal: doc.controller.signal }),
+          this.deps.translator.translate({ sources, index, signal: doc.controller.signal, ...(background.length > 0 ? { background } : {}) }),
         )
         return result.ok
           ? { translation: result.translation, failed: false, echo: result.echo }
@@ -525,7 +673,7 @@ export class Pipeline {
    * `Cancelled` when the document is aborted (queued or running) or when the
    * pipeline is disabled while the task is still queued.
    */
-  private async stage<T>(doc: DocState, stage: Stage, distance: number, fn: () => Promise<T>): Promise<T> {
+  private async stage<T>(doc: Scope, stage: Stage, distance: number, fn: () => Promise<T>): Promise<T> {
     if (doc.controller.signal.aborted) throw new Cancelled()
     // Disabling auto-translate cancels work that has not started: capture is the admission stage.
     // An image that already passed capture runs to the end (R3.2); its result is kept but not delivered.

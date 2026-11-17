@@ -1,0 +1,9 @@
+{
+  "extends": "./.wxt/tsconfig.json",
+  "compilerOptions": {
+    "useDefineForClassFields": true,
+    "noUncheckedIndexedAccess": false,
+    "verbatimModuleSyntax": false,
+    "resolveJsonModule": true
+  }
+}

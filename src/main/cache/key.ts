@@ -14,10 +14,10 @@ export interface CacheIdentity {
 
 /**
  * Key of one cached image: `sha256(content) | lang | detectorId | ocrModelId | mtModelId | promptVersion`
- * (design section 12). A change in any part is a different key, so old results are never served after the
+ * (design section 12), plus `|ctx:<hash>` when a series context was sent. A change in any part is a different key, so old results are never served after the
  * models or the prompt change. The separator is not allowed inside any part.
  */
-export function buildCacheKey(contentHash: string, identity: CacheIdentity): string {
+export function buildCacheKey(contentHash: string, identity: CacheIdentity, contextHash?: string): string {
   const parts = [
     contentHash,
     identity.lang,
@@ -25,6 +25,8 @@ export function buildCacheKey(contentHash: string, identity: CacheIdentity): str
     identity.ocrModelId,
     identity.mtModelId,
     identity.promptVersion,
+    // Only requests with series context get this part, so plain requests keep sharing the desktop's entries.
+    ...(contextHash ? [`ctx:${contextHash}`] : []),
   ]
   return parts.map((part) => part.replaceAll('|', '/')).join('|')
 }

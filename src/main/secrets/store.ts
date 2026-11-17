@@ -2,8 +2,11 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 /** Names of the stored secrets. */
-export type SecretName = 'openai' | 'gemini'
-export const SECRET_NAMES: readonly SecretName[] = ['openai', 'gemini']
+export type SecretName = 'openai' | 'gemini' | 'bridge'
+export const SECRET_NAMES: readonly SecretName[] = ['openai', 'gemini', 'bridge']
+
+/** Secrets the shell UI may set or see (the bridge pairing code is managed by the bridge only). */
+export type UserSecretName = Exclude<SecretName, 'bridge'>
 
 /** The slice of Electron's `safeStorage` this module uses (DPAPI on Windows). */
 export interface Cipher {
@@ -33,7 +36,7 @@ export class SecretStore {
     return (this.load()[name] ?? '').length > 0
   }
 
-  status(): Record<SecretName, boolean> {
+  status(): Record<UserSecretName, boolean> {
     return { openai: this.has('openai'), gemini: this.has('gemini') }
   }
 

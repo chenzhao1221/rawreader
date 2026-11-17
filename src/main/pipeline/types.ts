@@ -34,7 +34,14 @@ export interface ImageResult {
   height: number
   units: UnitResult[]
   timings: StageTimings
-  captureSource: 'cdp' | 'fetch' | 'data-url'
+  captureSource: 'cdp' | 'fetch' | 'data-url' | 'bridge'
+}
+
+/** Series background a bridge request adds to the translation prompt. `hash` joins the cache identity. */
+export interface TranslateContext {
+  /** Prompt lines (series name, summary, glossary), already capped in bytes. */
+  background: readonly string[]
+  hash: string
 }
 
 /** Where a page image is in the pipeline (requirements R5.7: pending, then done or error). */

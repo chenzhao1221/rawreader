@@ -38,6 +38,8 @@ export interface TranslateRequest {
   /** Index of the unit to translate. */
   index: number
   signal?: AbortSignal
+  /** Series background lines (name, summary, glossary) from the Chrome extension bridge. */
+  background?: readonly string[]
 }
 
 export type TranslateResult =
@@ -69,7 +71,7 @@ export class TranslateClient {
 
     const lmt = options.promptVariant === 'lmt'
     const prompt = lmt
-      ? buildIndexPrompt(source, options.targetLang, buildContext(sources, request.index, options.contextUnits))
+      ? buildIndexPrompt(source, options.targetLang, buildContext(sources, request.index, options.contextUnits), request.background)
       : buildBaselinePrompt(source, options.targetLang)
 
     const first = await this.ask(prompt, source, request.signal)
@@ -97,6 +99,7 @@ export class TranslateClient {
     rawSources: readonly string[],
     signal?: AbortSignal,
     previous: readonly { source: string; translation: string }[] = [],
+    background: readonly string[] = [],
   ): Promise<(string | null)[]> {
     const sources = rawSources.map((s) => normalizeOcrForPrompt(s ?? ''))
     const out: (string | null)[] = sources.map((s) => (s.length === 0 ? '' : null))
@@ -107,7 +110,7 @@ export class TranslateClient {
       // A single bubble gains nothing from the batch format.
       if (texts.length < 2) continue
       const answer = await this.ask(
-        buildBatchPrompt(texts, this.options.targetLang, start === 0 ? previous : []),
+        buildBatchPrompt(texts, this.options.targetLang, start === 0 ? previous : [], background),
         texts.join(''),
         signal,
         maxTokensForBatch(texts.map((t) => t.length)),

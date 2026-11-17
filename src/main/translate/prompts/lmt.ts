@@ -90,9 +90,17 @@ export function buildContext(sources: readonly string[], index: number, maxUnits
  * notes that the 2B model sometimes echoes the constraint block back; the echo
  * guard below catches that and the caller retries with the bare prompt.
  */
-export function buildIndexPrompt(text: string, targetLang: string, context: readonly string[] = []): string {
+export function buildIndexPrompt(
+  text: string,
+  targetLang: string,
+  context: readonly string[] = [],
+  background: readonly string[] = [],
+): string {
   const tgt = zhLangName(targetLang)
   const rules = [...(isChineseTarget(targetLang) ? ZH_STYLE_RULES : [])]
+  if (background.length > 0) {
+    rules.push(`【作品背景】仅供理解人名、术语和剧情，不要翻译，不要输出: ${background.join(' / ')}`)
+  }
   if (context.length > 0) {
     rules.push(`【参考前文】同一页前面的对白，仅供理解语气和指代，不要翻译，不要输出: ${context.join(' / ')}`)
   }
@@ -101,6 +109,19 @@ export function buildIndexPrompt(text: string, targetLang: string, context: read
   }
   const numbered = rules.map((rule, i) => `${i + 1}. ${rule}`).join('\n')
   return `请将以下漫画对白翻译成${tgt}，并且严格遵循所有约束要求。\n【源文】\n${text}\n【约束要求】\n${numbered}\n只输出译文，不要有任何额外说明。`
+}
+
+/**
+ * Background lines from the Chrome extension's series context: name, summary and glossary. Whitespace is
+ * collapsed so each part stays on one line. Empty parts are left out.
+ */
+export function buildSeriesBackground(context: { seriesName: string; summary: string; dictionary: string }): string[] {
+  const oneLine = (text: string): string => text.replace(/\s*[\r\n]+\s*/g, '；').replace(/[ \t]+/g, ' ').trim()
+  const lines: string[] = []
+  if (context.seriesName.trim()) lines.push(`作品：${oneLine(context.seriesName)}`)
+  if (context.summary.trim()) lines.push(`剧情：${oneLine(context.summary)}`)
+  if (context.dictionary.trim()) lines.push(`术语表（按此译法）：${oneLine(context.dictionary)}`)
+  return lines
 }
 
 /** Plain prompt with no context, used as the retry after an echo. */
@@ -120,9 +141,14 @@ export function buildBatchPrompt(
   texts: readonly string[],
   targetLang: string,
   previous: readonly { source: string; translation: string }[] = [],
+  background: readonly string[] = [],
 ): string {
   const tgt = zhLangName(targetLang)
-  const rules = isChineseTarget(targetLang) ? ZH_STYLE_RULES : []
+  const rules = [
+    ...(isChineseTarget(targetLang) ? ZH_STYLE_RULES : []),
+    // Series name, summary and glossary from the Chrome extension; absent for the built-in browser.
+    ...(background.length > 0 ? [`作品背景（仅供参考，不要输出）：${background.join('；')}`] : []),
+  ]
   const notes = rules.length > 0 ? `\n要求：\n${rules.map((rule) => `- ${rule}`).join('\n')}\n` : '\n'
   // Only the previous image's Chinese lines, before the instruction: tested on Index-Translate-2B, a
   // labelled "source -> translation" block or a parenthesised note after the instruction gets echoed or
@@ -143,7 +169,7 @@ export function buildBatchPrompt(
  * or when the model echoed the instructions: the caller then translates bubble by bubble.
  */
 export function parseBatchOutput(output: string, count: number): string[] | null {
-  if (/请将以下|行数必须相同|按同样的编号|要求：|前文：/.test(output)) return null
+  if (/请将以下|行数必须相同|按同样的编号|要求：|前文：|作品背景/.test(output)) return null
   const found = new Map<number, string>()
   for (const line of output.split(/\r?\n/)) {
     const match = /^\s*(\d{1,3})\s*[.、．:：)）]\s*(.*)$/.exec(line)

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { app, ipcMain, nativeTheme, net, safeStorage, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
 import { resolveTheme } from '../shared/theme'
@@ -8,6 +9,8 @@ import { FLAVOR } from '../shared/flavor'
 import { INFOBAR_HEIGHT, MAX_TABS } from '../shared/constants'
 import type { EventChannel } from '../shared/ipc/channels'
 import type { EventPayload } from '../shared/ipc/contract'
+import { createBridge, stopBridge } from './bridge'
+import type { Bridge } from './bridge'
 import { createIdentityProvider } from './cache/identity'
 import { createPipelineCache } from './cache/pipeline-cache'
 import { openResultCache } from './cache/store'
@@ -29,6 +32,7 @@ import { createHardwareProbe } from './system/hardware'
 import { FileVerifier, createJsonMemoStore } from './models/verify'
 import { createFontProvider } from './overlay/font'
 import { initLogging, logsDirFor } from './log/setup'
+import { serversUnavailable } from './pipeline/services'
 import { createPipelineWiring } from './pipeline/wiring'
 import type { PipelineWiring } from './pipeline/wiring'
 import { SHUTDOWN_TIMEOUT_MS, createQuitGuard } from './shutdown'
@@ -73,6 +77,7 @@ let shell: ShellWindow | null = null
 let tabs: TabManager | null = null
 let manager: LlamaManager | null = null
 let wiring: PipelineWiring | null = null
+let bridge: Bridge | null = null
 let openCache: ResultCache | null = null
 let models: ModelService | null = null
 let cuda: CudaInstaller | null = null
@@ -112,7 +117,11 @@ async function bootstrap(): Promise<void> {
   const secrets = new SecretStore(join(userDataDir, 'secrets.json'), safeStorage)
 
   const themeNow = () => resolveTheme(getConfig().ui.theme, nativeTheme.shouldUseDarkColors)
-  const shellWindow = createShellWindow(join(resourcesDir, 'icons', 'icon.png'), themeNow())
+  // With the extension bridge on and start-hidden set, the window stays in the tray until the user opens it.
+  const bridgeConfig = getConfig().bridge
+  const shellWindow = createShellWindow(join(resourcesDir, 'icons', 'icon.png'), themeNow(), {
+    startHidden: bridgeConfig.enabled && bridgeConfig.startHidden,
+  })
   shell = shellWindow
   const { win } = shellWindow
   // "Follow Windows": repaint the caption buttons when the system switches light/dark.
@@ -172,6 +181,25 @@ async function bootstrap(): Promise<void> {
     logger: createLogger('pipeline'),
   })
   wiring = pipelineWiring
+
+  // Chrome extension bridge: off by default. It is created here (cheap, nothing listens) and started below only
+  // when ridge.enabled is true.
+  const bridgeService = createBridge({
+    getConfig,
+    updateConfig,
+    pipeline: pipelineWiring.pipeline,
+    serversUnavailable: () =>
+      serversUnavailable(
+        { ocr: llama.getStatus('ocr'), translate: llama.getStatus('translate') },
+        getConfig().translate.engine,
+        (name) => secrets.has(name),
+      ),
+    secrets: { get: (name) => secrets.get(name), set: (name, value) => secrets.set(name, value) },
+    randomBytes: (size) => randomBytes(size),
+    appInfo: { productName: appIdentity.productName, version: app.getVersion() },
+    logger: createLogger('bridge'),
+  })
+  bridge = bridgeService
 
   let panelOpen = false
   let barShown = false
@@ -349,6 +377,9 @@ async function bootstrap(): Promise<void> {
     cudaDownload: (action) => (action === 'start' ? cudaInstaller.start() : cudaInstaller.cancel()),
     getHardware: () => hardwareProbe.get(),
     getLicenses: () => loadLicenses(licenseDocs, (path) => readFile(path, 'utf8')),
+    getBridgeStatus: () => bridgeService.getStatus(),
+    showBridgeCode: () => ({ code: bridgeService.showCode() }),
+    regenerateBridgeCode: () => ({ code: bridgeService.regenerateCode() }),
     getCacheStats: () => resultCache?.stats() ?? { entries: 0, bytes: 0 },
     clearCache: () => {
       resultCache?.clear()
@@ -365,9 +396,13 @@ async function bootstrap(): Promise<void> {
     sendToShell('config:changed', next)
     llama.handleConfigChange(next, previous)
     pipelineWiring.onConfigChanged(next)
+    void bridgeService.onConfigChanged(next, previous)
     if (next.ui.adBlock !== previous.ui.adBlock) void adBlock.setEnabled(next.ui.adBlock)
     if (next.ui.theme !== previous.ui.theme) applyWindowTheme(win, themeNow())
   })
+
+  // Config, pipeline and IPC are wired: only now may the bridge listen, and only when the user enabled it.
+  if (getConfig().bridge.enabled) void bridgeService.start()
 
   await shellWindow.loaded.catch((error: unknown) => {
     log.error(`Shell renderer failed to load: ${error instanceof Error ? error.message : String(error)}`)
@@ -446,6 +481,9 @@ if (headlessFlag) {
     quit: () => app.quit(),
     forceExit: () => app.exit(0),
     shutdown: async () => {
+      // The bridge goes first: stop accepting connections and abort in-flight requests, then the usual sequence.
+      await stopBridge(bridge)
+      bridge = null
       disposeIpc?.()
       models?.dispose()
       cuda?.cancel()

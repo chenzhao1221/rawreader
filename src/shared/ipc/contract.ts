@@ -281,6 +281,23 @@ export type CudaStatus = z.infer<typeof CudaStatusSchema>
 
 export const LicenseDocumentSchema = z.object({ id: z.string(), title: z.string(), text: z.string() })
 export const LicensesSchema = z.object({ documents: z.array(LicenseDocumentSchema) })
+
+// ---------------------------------------------------------------------------
+// Chrome extension bridge (shell only)
+// ---------------------------------------------------------------------------
+
+export const BridgeStatusSchema = z.object({
+  state: z.enum(['off', 'starting', 'listening', 'error']),
+  port: z.number().int(),
+  error: z.string().nullable(),
+  /** Extension ID recorded at the first authenticated request, or null. */
+  extensionId: z.string().nullable(),
+})
+export type BridgeStatus = z.infer<typeof BridgeStatusSchema>
+
+/** The pairing code in display form. Only the shell gets it, only on request, and it is never logged. */
+export const BridgeCodeSchema = z.object({ code: z.string() })
+export type BridgeCode = z.infer<typeof BridgeCodeSchema>
 export type Licenses = z.infer<typeof LicensesSchema>
 /** Errors crossing IPC are plain objects, never thrown class instances. */
 export const IpcErrorSchema = z.object({ code: z.string(), message: z.string() })
@@ -354,6 +371,9 @@ export const ipc = {
   'cuda:status': def(z.void(), CudaStatusSchema),
   'cuda:download': def(z.object({ action: z.enum(['start', 'cancel']) }), CudaStatusSchema),
   'licenses:get': def(z.void(), LicensesSchema),
+  'bridge:status': def(z.void(), BridgeStatusSchema),
+  'bridge:code': def(z.void(), BridgeCodeSchema),
+  'bridge:regenerate': def(z.void(), BridgeCodeSchema),
   'cache:stats': def(z.void(), CacheStatsSchema),
   'cache:clear': def(z.void(), CacheStatsSchema),
   'overlay:font': def(z.void(), z.custom<Uint8Array>((v) => v instanceof Uint8Array).nullable(), ['browse']),

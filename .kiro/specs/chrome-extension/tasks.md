@@ -71,18 +71,18 @@ Do not commit or push unless asked. Never modify `master`, the sibling folders (
   - Check: `cd extension && npm test` and `npm run typecheck` can run independently of the desktop build.
   - _ER11, ER12, §5.4, §8_
 
-- [ ] 9. **[SKELETON] Import LMT client surface, wire the bridge** (§1.3, §5)
-  - [ ] 9.1 Copy only the keep/change LMT files listed in §1.3 from `../libre-manga-translator` at commit 1ddddc7, each with a header naming the LMT path, the commit, AGPL-3.0-or-later, and that RawReader modified it. Do not copy WebLLM, in-browser OCR models, the setup wizard, or model-download management.
-  - [ ] 9.2 Replace `requestBubbleDetection` / `requestTextTranslation` with a bridge client: `POST /translate` (and memoised second call when boxes are unchanged, or a follow-up with `boxes` when the user edited them). Failed units become empty translations so existing skip/paint paths still work.
-  - [ ] 9.3 Options page (replaces setup): port, pairing code, test connection, typography/inpaint/site rules, about/licences.
-  - [ ] 9.4 Extension unit tests for the bridge client mapping and memo logic; port existing LMT tests that still apply. happy-dom is allowed; no real Chrome and no real RawReader window.
+- [x] 9. **[SKELETON] Import LMT client surface, wire the bridge** (§1.3, §5)
+  - [x] 9.1 Copy only the keep/change LMT files listed in §1.3 from `../libre-manga-translator` at commit 1ddddc7, each with a header naming the LMT path, the commit, AGPL-3.0-or-later, and that RawReader modified it. Do not copy WebLLM, in-browser OCR models, the setup wizard, or model-download management.
+  - [x] 9.2 Replace `requestBubbleDetection` / `requestTextTranslation` with a bridge client: `POST /translate` (and memoised second call when boxes are unchanged, or a follow-up with `boxes` when the user edited them). Failed units become empty translations so existing skip/paint paths still work.
+  - [x] 9.3 Options page (replaces setup): port, pairing code, test connection, typography/inpaint/site rules, about/licences.
+  - [x] 9.4 Extension unit tests for the bridge client mapping and memo logic; port existing LMT tests that still apply. happy-dom is allowed; no real Chrome and no real RawReader window.
   - Check: `cd extension && npm test` passes; a documented manual step can load the WXT output unpacked in Chrome and pair with a running app, but that manual step is not part of default CI.
   - _ER7, ER8, ER6, ER11, ER12_
 
-- [ ] 10. **[SKELETON] Gate: desktop tests still all pass** (§8)
-  - [ ] 10.1 From the repo root, run `npm run typecheck`, `npm test` and `npm run build` headless. Every previously existing desktop test must pass.
-  - [ ] 10.2 Confirm `bridge.enabled` defaults to false and a default startup path does not listen.
-  - [ ] 10.3 Confirm no adult-site names or URLs were added, and no `.pem` was committed.
+- [x] 10. **[SKELETON] Gate: desktop tests still all pass** (§8)
+  - [x] 10.1 From the repo root, run `npm run typecheck`, `npm test` and `npm run build` headless. Every previously existing desktop test must pass.
+  - [x] 10.2 Confirm `bridge.enabled` defaults to false and a default startup path does not listen.
+  - [x] 10.3 Confirm no adult-site names or URLs were added, and no `.pem` was committed.
   - Check: the three root commands exit 0; `git status` is only the intended files on branch `extension`.
   - _ER1, ER12_
 

@@ -19,7 +19,7 @@ import type {
 import { label, zhCN } from './i18n/zh-CN'
 import { resolveTheme } from '../../shared/theme'
 
-export type SettingsTab = 'engine' | 'models' | 'servers' | 'advanced' | 'licenses'
+export type SettingsTab = 'engine' | 'models' | 'servers' | 'advanced' | 'licenses' | 'bridge'
 
 export interface ShellStore {
   browse: BrowseState

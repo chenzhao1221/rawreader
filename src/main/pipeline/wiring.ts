@@ -133,6 +133,8 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
         request,
       ),
     detect: new LazyDetectService(options),
+    // Chrome extension bridge: boxes the user drew skip detection. sharp loads on first use.
+    cropBoxes: async (bytes, boxes, padding) => (await import('../detect/crop')).cropBoxesToUnits(bytes, boxes, padding),
     ocr: clients.ocr,
     translator: clients.translator,
     ...(clients.vision ? { vision: clients.vision } : {}),

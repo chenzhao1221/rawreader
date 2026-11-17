@@ -10,6 +10,7 @@ export {
   buildBatchPrompt,
   buildContext,
   buildIndexPrompt,
+  buildSeriesBackground,
   looksLikePromptEcho,
   maxTokensFor,
   maxTokensForBatch,

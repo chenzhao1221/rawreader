@@ -16,15 +16,15 @@ export function createPipelineCache(options: {
   logger: Logger
 }): PipelineCache {
   return {
-    lookup(hash) {
-      return options.cache.get(buildCacheKey(hash, options.getIdentity()))
+    lookup(hash, variant) {
+      return options.cache.get(buildCacheKey(hash, options.getIdentity(), variant))
     },
-    store(hash, result) {
+    store(hash, result, variant) {
       if (!isCacheable(result)) {
         options.logger.debug('Result has failed units; not cached')
         return
       }
-      options.cache.put(buildCacheKey(hash, options.getIdentity()), hash, result)
+      options.cache.put(buildCacheKey(hash, options.getIdentity(), variant), hash, result)
     },
   }
 }
