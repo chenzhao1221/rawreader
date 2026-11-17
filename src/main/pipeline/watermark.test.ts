@@ -4,19 +4,19 @@ import { looksLikeWatermark } from './watermark'
 describe('looksLikeWatermark', () => {
   describe('detects scan-site stamps', () => {
     it('recognizes a bare domain', () => {
-      expect(looksLikeWatermark('TEMPLESCANESP.NET')).toBe(true)
+      expect(looksLikeWatermark('EXAMPLE-MANGA.TEST')).toBe(true)
     })
 
     it('joins a vertical stamp OCR split over lines', () => {
-      expect(looksLikeWatermark('Te-\nmpl-\nes-\ncan-\nesp.\nnet')).toBe(true)
+      expect(looksLikeWatermark('exam-\nple-man-\nga.t-\nest')).toBe(true)
     })
 
     it('joins a vertical stamp split by hyphens and spaces', () => {
-      expect(looksLikeWatermark('Te- mpl- esc- ane- sp.n- et')).toBe(true)
+      expect(looksLikeWatermark('exa- mple-man- ga.t- est')).toBe(true)
     })
 
     it('finds an address in the middle of a sentence', () => {
-      expect(looksLikeWatermark('ESCRIBE EN TU NAVEGADOR TEMPLESCANESP.NET PARA LEER')).toBe(true)
+      expect(looksLikeWatermark('ESCRIBE EN TU NAVEGADOR EXAMPLE-MANGA.TEST PARA LEER')).toBe(true)
     })
 
     it('recognizes http and www addresses', () => {
@@ -25,12 +25,12 @@ describe('looksLikeWatermark', () => {
     })
 
     it('normalizes a full-width dot', () => {
-      expect(looksLikeWatermark('templescanesp．net')).toBe(true)
+      expect(looksLikeWatermark('example-manga．test')).toBe(true)
     })
 
     it('recognizes a domain after other words', () => {
-      expect(looksLikeWatermark('Read at manga18.club')).toBe(true)
-      expect(looksLikeWatermark('toonily.com')).toBe(true)
+      expect(looksLikeWatermark('Read at example-manga2.test')).toBe(true)
+      expect(looksLikeWatermark('example-manga.test')).toBe(true)
     })
   })
 

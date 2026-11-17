@@ -3,8 +3,11 @@
  * OCR text contains a web address is dropped whole: not translated, not drawn, not used as context.
  */
 
-/** Top-level domains seen on scan sites. Short ones that are common words ("to", "es", "me", "co") are left out. */
-const TLDS = 'com|net|org|xyz|club|site|top|info|online|vip|biz|moe|cc|tv|io|gg|ru'
+/**
+ * Top-level domains seen on scan sites. Short ones that are common words ("to", "es", "me", "co") are left out.
+ * "test" is the reserved TLD used by fixtures, so tests never have to name a real site.
+ */
+const TLDS = 'com|net|org|xyz|club|site|top|info|online|vip|biz|moe|cc|tv|io|gg|ru|test'
 
 /** A label of 3+ letters/digits/hyphens, a dot, a TLD, as whole words. */
 const DOMAIN = new RegExp(`\\b[a-z0-9][a-z0-9-]{2,}\\.(?:${TLDS})\\b`, 'i')
