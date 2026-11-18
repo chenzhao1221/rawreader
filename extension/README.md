@@ -29,25 +29,21 @@ Other commands: `npm test` (Vitest, headless, no Chrome), `npm run typecheck` (s
 3. Click **Load unpacked** and choose the `.output\chrome-mv3` folder above.
 4. After a rebuild, click the reload icon on the extension card.
 
-The first install opens the extension's options page in a tab.
+The extension ID is fixed by the `key` in `extension-key.json` (ID `gpkjhmgphgimhomimgpjbdehibhenlce`). Do not remove the key: the app only accepts requests from this ID.
 
-## Pair it with the app
+## Connect to the app
 
-The app's bridge is off by default. Nothing listens on the network until you turn it on.
+There is nothing to configure. Install the extension, open the RawReader app, and it works.
 
-1. In the RawReader app open **Settings → 浏览器插件** and switch on **启用浏览器插件桥接**. The default port is **18793**; it listens on `127.0.0.1` only.
-2. Click **显示** next to the pairing code (16 characters, shown as `XXXX-XXXX-XXXX-XXXX`) and copy it.
-3. In Chrome open the extension's options page (right-click the extension icon → Options, or the **设置** button in the popup).
-4. Enter the same port (default 18793) and paste the pairing code. Settings save automatically.
-5. Click **测试连接**. A green line means the app answered and its models are ready. An amber line means the app is reachable but cannot translate yet (for example the models are missing).
-
-The first successful request records the extension's ID in the app, so a different extension cannot use the same code. **重新生成** in the app invalidates the old code; paste the new one in the options page.
-
+- The app's bridge is on by default and starts with the app. It listens on `127.0.0.1` only, on port **18793**, or the next free one of **18794-18797** when 18793 is taken. **Settings → 浏览器插件** has a switch to turn it off.
+- There is no pairing code. The app answers only requests whose `Origin` is `chrome-extension://gpkjhmgphgimhomimgpjbdehibhenlce`, the ID pinned by the manifest `key`. Web pages, other extensions and requests without an `Origin` get `403`, and CORS is granted to that one ID only.
+- The extension probes `GET /ping` on 18793-18797 when the browser starts and before every translation, uses the first port that answers and caches it. If the app is closed, the popup says **请先打开 RawReader**.
+- The options page shows the connection state and a **重新检测** button. It has no port or code fields.
 ## Use it
 
 Open a page with comic images, hover an image and use the floating button, or turn on **自动翻译** in the popup to translate images as they appear. The options page also holds the text style, inpainting and per-site rules.
 
-If a request fails the extension shows a Chinese message with the reason: wrong pairing code, app not running, bridge not enabled, or models not ready.
+If a request fails the extension shows a Chinese message with the reason: app not running (open RawReader first), request refused (not the official extension build), or models not ready.
 
 ## Layout
 
@@ -55,7 +51,7 @@ If a request fails the extension shows a Chinese message with the reason: wrong 
 |---|---|
 | `src/entrypoints/background/` | Service worker: talks to the app (`BRIDGE_PING`, `BRIDGE_TRANSLATE`), per-tab request gate |
 | `src/entrypoints/content/` | Content script: finds images, draws the overlay, calls the background worker |
-| `src/entrypoints/popup/`, `options/` | Toolbar popup and the options page (port, pairing code, test, text style, site rules) |
+| `src/entrypoints/popup/`, `options/` | Toolbar popup and the options page (connection state, text style, site rules) |
 | `src/entrypoints/offscreen/` | Canvas work for text cleaning |
 | `src/lib/bridge/` | Wire types, HTTP client, per-image memo, priority gate |
 | `tests/unit/` | Vitest unit tests |

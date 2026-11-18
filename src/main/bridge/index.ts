@@ -1,10 +1,9 @@
-import type { Config, DeepPartial } from '../../shared/config/schema'
+import { BRIDGE_PORTS, DEFAULT_BRIDGE_PORT } from '../../shared/bridge'
+import type { Config } from '../../shared/config/schema'
 import type { Logger } from '../log/log'
 import { PipelineError } from '../pipeline/scheduler'
 import type { TranslateBytesOptions, TranslateBytesResult } from '../pipeline/scheduler'
 import { normalizeContext } from './context'
-import { formatPairingCode, generatePairingCode } from './pairing'
-import type { RandomBytes } from './pairing'
 import { toBridgeResult } from './protocol'
 import type { PingResponse } from './protocol'
 import { createBridgeServer } from './server'
@@ -12,26 +11,20 @@ import type { BridgeFailure, BridgeServer, BridgeServerDeps } from './server'
 
 export type BridgeState = 'off' | 'starting' | 'listening' | 'error'
 
-/** What the settings page shows. Never contains the pairing code. */
+/** What the settings page shows. */
 export interface BridgeStatus {
   state: BridgeState
-  /** Port in use while listening, else the configured one. */
+  /** Port in use while listening, else the default one. */
   port: number
   /** Redacted start error (port in use, bind failure), or null. */
   error: string | null
-  /** Extension ID recorded at the first authenticated request, or null. */
-  extensionId: string | null
 }
 
 export interface BridgeDeps {
   getConfig(): Config
-  updateConfig(patch: DeepPartial<Config>): Config
   pipeline: { translateBytes(bytes: Uint8Array, options?: TranslateBytesOptions): Promise<TranslateBytesResult> }
   /** `null` when the configured engine can take work, otherwise why not (as for the desktop pipeline). */
   serversUnavailable(): { code: string; message: string } | null
-  /** The pairing code lives under the secret name `bridge`. */
-  secrets: { get(name: 'bridge'): string | null; set(name: 'bridge', value: string): void }
-  randomBytes: RandomBytes
   appInfo: { productName: string; version: string }
   logger: Logger
   /** Test seam: replaces the HTTP server. */
@@ -39,17 +32,13 @@ export interface BridgeDeps {
 }
 
 export interface Bridge {
-  /** Starts the listener when `bridge.enabled` is true. A no-op otherwise: nothing listens by default. */
+  /** Starts the listener when `bridge.enabled` is true (the default). A no-op otherwise. */
   start(): Promise<void>
   /** Stops listening and aborts in-flight requests. Safe to call when not running. */
   stop(): Promise<void>
-  /** Reacts to a config change: enable, disable or port change. */
+  /** Reacts to a config change: enable or disable. */
   onConfigChanged(next: Config, previous: Config): Promise<void>
   getStatus(): BridgeStatus
-  /** The code in display form (`ABCD-EFGH-JKMN-PQRS`); created on first use. */
-  showCode(): string
-  /** Invalidates the old code and clears the recorded extension ID. Returns the new code in display form. */
-  regenerateCode(): string
 }
 
 /** Pipeline failures that are not the caller's business are reported without internals. */
@@ -59,8 +48,8 @@ function toFailure(error: unknown): BridgeFailure {
 }
 
 /**
- * Lifecycle of the extension bridge (design 4.4). Everything Electron-specific is injected, so the default-off
- * rule and the enable / disable / port-change paths are unit-tested with a fake server.
+ * Lifecycle of the extension bridge (design 4.4). Everything Electron-specific is injected, so the default-on
+ * rule, the port fallback and the enable / disable paths are unit-tested with a fake server.
  */
 export function createBridge(deps: BridgeDeps): Bridge {
   const make = deps.createServer ?? createBridgeServer
@@ -75,14 +64,6 @@ export function createBridge(deps: BridgeDeps): Bridge {
     const next = chain.then(task, task)
     chain = next.catch(() => {})
     return next
-  }
-
-  function ensureCode(): string {
-    const existing = deps.secrets.get('bridge')
-    if (existing) return existing
-    const fresh = generatePairingCode(deps.randomBytes)
-    deps.secrets.set('bridge', fresh)
-    return fresh
   }
 
   function serverDeps(): BridgeServerDeps {
@@ -112,39 +93,35 @@ export function createBridge(deps: BridgeDeps): Bridge {
           throw toFailure(failure)
         }
       },
-      pairing: {
-        getCode: () => ensureCode(),
-        getExtensionId: () => deps.getConfig().bridge.extensionId,
-        recordExtensionId: (id) => {
-          deps.updateConfig({ bridge: { extensionId: id } })
-          deps.logger.info('bridge paired with an extension (trust on first use)')
-        },
-      },
       maxImageBytes: () => deps.getConfig().pipeline.maxImageBytes,
       logger: deps.logger,
     }
   }
 
   async function listen(): Promise<void> {
-    const config = deps.getConfig().bridge
-    if (!config.enabled || server) return
+    if (!deps.getConfig().bridge.enabled || server) return
     state = 'starting'
     error = null
     const created = make(serverDeps())
-    try {
-      ensureCode()
-      activePort = await created.start(config.port)
-      server = created
-      state = 'listening'
-      deps.logger.info(`bridge listening on 127.0.0.1:${activePort}`)
-    } catch (failure) {
-      server = null
-      activePort = null
-      state = 'error'
-      // Port in use and bind errors carry no secrets, but keep to the message only.
-      error = failure instanceof Error ? failure.message : 'Cannot start the bridge'
-      deps.logger.error(`bridge failed to start: ${error}`)
+    let lastError = 'Cannot start the bridge'
+    // First free port of the fixed range; the extension probes the same list.
+    for (const port of BRIDGE_PORTS) {
+      try {
+        activePort = await created.start(port)
+        server = created
+        state = 'listening'
+        deps.logger.info(`bridge listening on 127.0.0.1:${activePort}`)
+        return
+      } catch (failure) {
+        // Port in use and bind errors carry no secrets, but keep to the message only.
+        lastError = failure instanceof Error ? failure.message : lastError
+      }
     }
+    server = null
+    activePort = null
+    state = 'error'
+    error = lastError
+    deps.logger.error(`bridge failed to start on every port: ${lastError}`)
   }
 
   async function close(): Promise<void> {
@@ -167,33 +144,21 @@ export function createBridge(deps: BridgeDeps): Bridge {
     onConfigChanged(next, previous) {
       const was = previous.bridge
       const now = next.bridge
-      if (now.enabled === was.enabled && now.port === was.port) return Promise.resolve()
+      if (now.enabled === was.enabled) return Promise.resolve()
       return enqueue(async () => {
         if (!now.enabled) return close()
-        // Enabled now: a new port or a fresh enable needs a (re)start.
+        // Enabled now: a fresh enable needs a (re)start.
         if (server || state === 'error') await close()
         return listen()
       })
     },
     getStatus() {
-      const config = deps.getConfig().bridge
-      return { state, port: activePort ?? config.port, error, extensionId: config.extensionId }
-    },
-    showCode() {
-      return formatPairingCode(ensureCode())
-    },
-    regenerateCode() {
-      const fresh = generatePairingCode(deps.randomBytes)
-      deps.secrets.set('bridge', fresh)
-      // The old code is gone and the next authenticated request records its extension again.
-      deps.updateConfig({ bridge: { extensionId: null } })
-      deps.logger.info('bridge pairing code regenerated')
-      return formatPairingCode(fresh)
+      return { state, port: activePort ?? DEFAULT_BRIDGE_PORT, error }
     },
   }
 }
 
-/** Creates the bridge and starts it when `bridge.enabled` is true. With the default config nothing listens. */
+/** Creates the bridge and starts it when `bridge.enabled` is true (the default). */
 export async function startBridge(deps: BridgeDeps): Promise<Bridge> {
   const bridge = createBridge(deps)
   await bridge.start()

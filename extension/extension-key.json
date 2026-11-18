@@ -1,0 +1,5 @@
+{
+  "_comment": "Public key for the manifest `key` field. It pins the extension ID. The private half was discarded after generation; only this public key is needed. extensionId is derived from the key (sha256 of the DER, first 16 bytes, hex mapped to a-p) and must equal BRIDGE_EXTENSION_ID in src/shared/bridge.ts (checked by a unit test).",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx8ml9YYbdbvxZpWCD0vvU2Gv9Uc/WTEsMsHqJSnK7RODQZBFxwT86ViaIASin/hDy3mW3cvvdx5MOmfw18Vyq/Xtf6WzrAgWXtiU74Lxrpu8gPLkFsEh4p1y4c7B5A6Ex6LUKCcSB+/PCicJI42MXkFD05RP0yjckhPzdoIg+x7DgzB74j8GfyCfH3oawwbuYf0JWNfCo9zxBVK6jR2z58UHqNJJPq1y1qoepe3CVaGqx/lRPNbCxT1LeK0Z6ZaWiGzfkkN0qhZCD91MEXVL0FVTqtloFK4diKbR9pXMjqEXu0hzpiALvisSSkqteO+AX0nIqYOckx0bsBnrzv++YQIDAQAB",
+  "extensionId": "gpkjhmgphgimhomimgpjbdehibhenlce"
+}

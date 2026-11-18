@@ -2,8 +2,7 @@ import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { sniffMime } from '../capture/sniff'
 import type { Logger } from '../log/log'
-import { AuthRateLimiter, checkRequest } from './guards'
-import type { GuardState } from './guards'
+import { checkRequest } from './guards'
 import { TranslateRequestSchema } from './protocol'
 import type { BridgeError, PingResponse, TranslateRequest, TranslateResponse } from './protocol'
 
@@ -36,13 +35,6 @@ export interface BridgeServerDeps {
   /** Status for `GET /ping`. */
   ping(): PingResponse
   translate(job: BridgeTranslateJob): Promise<TranslateResponse>
-  pairing: {
-    /** Current pairing code, canonical form. */
-    getCode(): string
-    getExtensionId(): string | null
-    /** Trust on first use: called once with the ID of the first authenticated request after (re)generation. */
-    recordExtensionId(id: string): void
-  }
   /** Largest accepted image, in bytes (`pipeline.maxImageBytes`). Read per request. */
   maxImageBytes(): number
   logger: Logger
@@ -71,18 +63,10 @@ function isFailure(value: unknown): value is BridgeFailure {
  */
 export function createBridgeServer(deps: BridgeServerDeps): BridgeServer {
   const now = deps.now ?? Date.now
-  const limiter = new AuthRateLimiter(now)
   let server: Server | null = null
   let port = 0
   /** Aborted on stop(): every in-flight request stops its work. */
   let lifetime = new AbortController()
-
-  const guardState = (): GuardState => ({
-    port,
-    code: deps.pairing.getCode(),
-    recordedExtensionId: deps.pairing.getExtensionId(),
-    limiter,
-  })
 
   function send(res: ServerResponse, status: number, body: unknown, origin?: string, extra: Record<string, string> = {}): void {
     if (res.headersSent || res.destroyed) return
@@ -151,17 +135,8 @@ export function createBridgeServer(deps: BridgeServerDeps): BridgeServer {
       deps.logger.info(`bridge ${method} ${path} ${status} ${now() - started}ms in=${bytesIn}B`)
     })
 
-    // Nothing below may reflect or log the pairing code, headers or the image.
-    const verdict = checkRequest(
-      {
-        method,
-        path,
-        host: req.headers.host,
-        origin: req.headers.origin,
-        authorization: req.headers.authorization,
-      },
-      guardState(),
-    )
+    // Nothing below may reflect or log headers or the image.
+    const verdict = checkRequest({ method, path, host: req.headers.host, origin: req.headers.origin }, { port })
     if (!verdict.ok) {
       send(res, verdict.status, errorBody(verdict.code, verdict.message), verdict.origin, { Connection: 'close' })
       return
@@ -171,14 +146,12 @@ export function createBridgeServer(deps: BridgeServerDeps): BridgeServer {
     if (verdict.preflight) {
       send(res, 204, undefined, origin, {
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        'Access-Control-Allow-Headers': 'Content-Type',
         'Access-Control-Max-Age': '600',
         'Access-Control-Allow-Private-Network': 'true',
       })
       return
     }
-
-    if (verdict.firstUse) deps.pairing.recordExtensionId(verdict.extensionId)
 
     if (verdict.route === 'ping') {
       send(res, 200, deps.ping(), origin)
@@ -273,7 +246,6 @@ export function createBridgeServer(deps: BridgeServerDeps): BridgeServer {
         created.listen(requestedPort, BRIDGE_HOST, () => {
           const address = created.address()
           port = typeof address === 'object' && address ? address.port : requestedPort
-          limiter.reset()
           listeningNow = true
           resolve(port)
         })

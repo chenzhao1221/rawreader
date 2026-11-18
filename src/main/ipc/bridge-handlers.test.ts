@@ -11,25 +11,20 @@ const ids = { shell: () => SHELL_ID, isBrowse: (id: number) => id === BROWSE_ID 
 const event = (senderId: number): SenderEventLike => ({ sender: { id: senderId } }) as unknown as SenderEventLike
 
 describe('bridge IPC channels', () => {
-  it('delegate status, show code and regenerate to the bridge dependencies', () => {
+  it('delegates status to the bridge dependency', () => {
     const handlers = new Map<string, (payload: unknown, event: SenderEventLike) => unknown>()
     const registrar = { handle: (channel: string, fn: (payload: unknown, event: SenderEventLike) => unknown) => void handlers.set(channel, fn) }
-    const deps = {
-      getBridgeStatus: vi.fn(() => ({ state: 'off', port: 18793, error: null, extensionId: null })),
-      showBridgeCode: vi.fn(() => ({ code: 'ABCD-EFGH-JKMN-PQRS' })),
-      regenerateBridgeCode: vi.fn(() => ({ code: 'WXYZ-0123-4567-89AB' })),
-    }
+    const deps = { getBridgeStatus: vi.fn(() => ({ state: 'listening', port: 18793, error: null })) }
     registerSkeletonHandlers(registrar as unknown as IpcRegistrar, deps as unknown as HandlerDeps)
 
-    expect(handlers.get('bridge:status')?.(undefined, event(SHELL_ID))).toMatchObject({ state: 'off' })
-    expect(handlers.get('bridge:code')?.(undefined, event(SHELL_ID))).toEqual({ code: 'ABCD-EFGH-JKMN-PQRS' })
-    expect(handlers.get('bridge:regenerate')?.(undefined, event(SHELL_ID))).toEqual({ code: 'WXYZ-0123-4567-89AB' })
-    expect(deps.regenerateBridgeCode).toHaveBeenCalledTimes(1)
+    expect(handlers.get('bridge:status')?.(undefined, event(SHELL_ID))).toMatchObject({ state: 'listening', port: 18793 })
+    expect(handlers.has('bridge:code')).toBe(false)
+    expect(handlers.has('bridge:regenerate')).toBe(false)
   })
 
-  it.each(['bridge:status', 'bridge:code', 'bridge:regenerate'] as const)('%s accepts the shell only, never the browse view', async (channel) => {
-    const handler = vi.fn(() => ({ code: 'x', state: 'off', port: 1, error: null, extensionId: null }))
-    const run = createChannelHandler(channel, handler, ids, silentLogger)
+  it('accepts the shell only for bridge:status, never the browse view', async () => {
+    const handler = vi.fn(() => ({ state: 'off' as const, port: 18793, error: null }))
+    const run = createChannelHandler('bridge:status', handler, ids, silentLogger)
     const fromBrowse = await run(event(BROWSE_ID), undefined)
     expect(fromBrowse.ok === false && fromBrowse.error.code).toBe('FORBIDDEN_SENDER')
     const stranger = await run(event(12345), undefined)
@@ -38,11 +33,11 @@ describe('bridge IPC channels', () => {
     expect((await run(event(SHELL_ID), undefined)).ok).toBe(true)
   })
 
-  it('keeps the recorded extension ID out of config patches from the shell', async () => {
+  it('rejects a bridge port or extension ID in config patches from the shell', async () => {
     const handler = vi.fn()
     const run = createChannelHandler('config:update', handler, ids, silentLogger)
-    const result = await run(event(SHELL_ID), { bridge: { extensionId: 'a'.repeat(32) } })
-    expect(result.ok).toBe(false)
+    expect((await run(event(SHELL_ID), { bridge: { extensionId: 'a'.repeat(32) } })).ok).toBe(false)
+    expect((await run(event(SHELL_ID), { bridge: { port: 18800 } })).ok).toBe(false)
     expect(handler).not.toHaveBeenCalled()
   })
 })

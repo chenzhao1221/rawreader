@@ -1,14 +1,13 @@
 import { request } from 'node:http'
 import type { IncomingHttpHeaders } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { BRIDGE_ALLOWED_ORIGIN } from '../../shared/bridge'
 import { silentLogger } from '../log/log'
 import { BRIDGE_HOST, createBridgeServer } from './server'
 import type { BridgeServer, BridgeServerDeps, BridgeTranslateJob } from './server'
 import type { TranslateResponse } from './protocol'
 
-const ID = 'a'.repeat(32)
-const CODE = 'ABCDEFGHJKMNPQRS'
-const ORIGIN = `chrome-extension://${ID}`
+const ORIGIN = BRIDGE_ALLOWED_ORIGIN
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 1, 2, 3])
 const b64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString('base64')
 
@@ -40,7 +39,6 @@ function send(port: number, call: Call = {}): Promise<Reply> {
   const defaults: Record<string, string | undefined> = {
     Host: `127.0.0.1:${port}`,
     Origin: ORIGIN,
-    Authorization: `Bearer ${CODE}`,
     ...call.headers,
   }
   for (const [key, value] of Object.entries(defaults)) if (value !== undefined) headers[key] = value
@@ -63,22 +61,13 @@ const post = (port: number, body: unknown, headers?: Call['headers']): Promise<R
 
 describe('bridge HTTP server', () => {
   let server: BridgeServer | null = null
-  let recorded: string | null = null
 
   async function boot(overrides: Partial<BridgeServerDeps> = {}) {
-    recorded = null
     const translate = vi.fn((_job: BridgeTranslateJob) => Promise.resolve(okResponse))
     const ping = vi.fn(() => ({ v: 1 as const, app: 'App', version: '0.0.1', ready: true, engine: 'local' as const }))
     const s = createBridgeServer({
       ping,
       translate,
-      pairing: {
-        getCode: () => CODE,
-        getExtensionId: () => recorded,
-        recordExtensionId: (id) => {
-          recorded = id
-        },
-      },
       maxImageBytes: () => 1000,
       logger: silentLogger,
       ...overrides,
@@ -114,32 +103,22 @@ describe('bridge HTTP server', () => {
     expect(reply.headers.vary).toBe('Origin')
   })
 
-  it('records the extension ID on the first authenticated request (trust on first use)', async () => {
+  it('answers the CORS preflight for the extension origin only', async () => {
     const { port } = await boot()
-    await send(port)
-    expect(recorded).toBe(ID)
-    const other = await send(port, { headers: { Origin: `chrome-extension://${'b'.repeat(32)}` } })
-    expect(other.status).toBe(403)
-    expect(other.json).toMatchObject({ code: 'unknown-extension' })
-  })
-
-  it('answers the CORS preflight without credentials, for the extension origin only', async () => {
-    const { port } = await boot()
-    const ok = await send(port, { method: 'OPTIONS', path: '/translate', headers: { Authorization: undefined } })
+    const ok = await send(port, { method: 'OPTIONS', path: '/translate', })
     expect(ok.status).toBe(204)
     expect(ok.headers['access-control-allow-origin']).toBe(ORIGIN)
-    expect(ok.headers['access-control-allow-headers']).toContain('Authorization')
-    const page = await send(port, { method: 'OPTIONS', path: '/translate', headers: { Origin: 'https://site.example', Authorization: undefined } })
+    expect(ok.headers['access-control-allow-headers']).toBe('Content-Type')
+    const page = await send(port, { method: 'OPTIONS', path: '/translate', headers: { Origin: 'https://site.example' } })
     expect(page.status).toBe(403)
     expect(page.headers['access-control-allow-origin']).toBeUndefined()
   })
 
   it.each<[string, Call, number, string]>([
-    ['no pairing code', { headers: { Authorization: undefined } }, 401, 'unauthorized'],
-    ['wrong pairing code', { headers: { Authorization: 'Bearer AAAAAAAAAAAAAAAA' } }, 401, 'unauthorized'],
     ['non-loopback Host', { headers: { Host: 'localhost:1234' } }, 403, 'forbidden-host'],
     ['page Origin', { headers: { Origin: 'https://site.example' } }, 403, 'forbidden-origin'],
     ['no Origin', { headers: { Origin: undefined } }, 403, 'forbidden-origin'],
+    ['another extension ID', { headers: { Origin: `chrome-extension://${'b'.repeat(32)}` } }, 403, 'forbidden-origin'],
     ['unknown path', { path: '/admin' }, 404, 'not-found'],
     ['unsupported method', { method: 'DELETE', path: '/translate' }, 404, 'not-found'],
   ])('rejects %s', async (_name, call, status, code) => {
@@ -150,19 +129,11 @@ describe('bridge HTTP server', () => {
     expect(translate).not.toHaveBeenCalled()
   })
 
-  it('returns 401 for /translate without a valid pairing code and never reads the body or calls translate', async () => {
+  it('returns 403 for /translate from a web page or without an Origin, and never calls translate', async () => {
     const { port, translate } = await boot()
-    const reply = await post(port, { v: 1, image: b64(PNG) }, { Authorization: undefined })
-    expect(reply.status).toBe(401)
+    expect((await post(port, { v: 1, image: b64(PNG) }, { Origin: 'https://site.example' })).status).toBe(403)
+    expect((await post(port, { v: 1, image: b64(PNG) }, { Origin: undefined })).status).toBe(403)
     expect(translate).not.toHaveBeenCalled()
-  })
-
-  it('returns 429 after repeated failed authentications', async () => {
-    const { port } = await boot()
-    for (let i = 0; i < 6; i++) await send(port, { headers: { Authorization: 'Bearer AAAAAAAAAAAAAAAA' } })
-    const reply = await send(port)
-    expect(reply.status).toBe(429)
-    expect(reply.json).toMatchObject({ code: 'rate-limited' })
   })
 
   it('translates: decodes the image, passes priority, context and boxes, and returns the result', async () => {
@@ -212,7 +183,7 @@ describe('bridge HTTP server', () => {
           port,
           method: 'POST',
           path: '/translate',
-          headers: { Host: `127.0.0.1:${port}`, Origin: ORIGIN, Authorization: `Bearer ${CODE}`, 'Transfer-Encoding': 'chunked' },
+          headers: { Host: `127.0.0.1:${port}`, Origin: ORIGIN, 'Transfer-Encoding': 'chunked' },
         },
         (res) => {
           res.resume()
@@ -269,7 +240,7 @@ describe('bridge HTTP server', () => {
       port,
       method: 'POST',
       path: '/translate',
-      headers: { Host: `127.0.0.1:${port}`, Origin: ORIGIN, Authorization: `Bearer ${CODE}` },
+      headers: { Host: `127.0.0.1:${port}`, Origin: ORIGIN },
     })
     req.on('error', () => {})
     req.end(JSON.stringify({ v: 1, image: b64(PNG) }))
@@ -302,7 +273,6 @@ describe('bridge HTTP server', () => {
     const second = createBridgeServer({
       ping: () => ({ v: 1, app: 'A', version: '1', ready: true, engine: 'local' }),
       translate: () => Promise.resolve(okResponse),
-      pairing: { getCode: () => CODE, getExtensionId: () => null, recordExtensionId: () => {} },
       maxImageBytes: () => 1000,
       logger: silentLogger,
     })

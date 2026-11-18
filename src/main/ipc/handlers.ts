@@ -3,7 +3,6 @@ import type {
   CacheStats,
   CudaStatus,
   HardwareInfo,
-  BridgeCode,
   BridgeStatus,
   Licenses,
   ModelRoleName,
@@ -72,10 +71,6 @@ export interface HandlerDeps {
   getHardware(): Promise<HardwareInfo>
   getLicenses(): Promise<Licenses>
   getBridgeStatus(): BridgeStatus
-  /** Pairing code in display form; created on first use. */
-  showBridgeCode(): BridgeCode
-  /** New pairing code; the old one stops working and the recorded extension is cleared. */
-  regenerateBridgeCode(): BridgeCode
 }
 
 /** Registers every skeleton channel. All of them accept the shell renderer only. */
@@ -155,10 +150,8 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
   registrar.handle('models:use-file', ({ role, path }) => deps.modelsUseFile(role, path))
   registrar.handle('models:clear-path', ({ role }) => deps.modelsClearPath(role))
   registrar.handle('cuda:status', () => deps.getCudaStatus())
-  // Bridge channels accept the shell only (the default sender rule); the code is returned on request, never pushed.
+  // Bridge channels accept the shell only (the default sender rule).
   registrar.handle('bridge:status', () => deps.getBridgeStatus())
-  registrar.handle('bridge:code', () => deps.showBridgeCode())
-  registrar.handle('bridge:regenerate', () => deps.regenerateBridgeCode())
   registrar.handle('cuda:download', ({ action }) => deps.cudaDownload(action))
   registrar.handle('system:info', () => deps.getHardware())
   registrar.handle('licenses:get', () => deps.getLicenses())

@@ -1,5 +1,7 @@
 # Chrome extension line: design
 
+> **Superseded by task 13 (auto-connect).** The pairing code, trust-on-first-use extension ID, rate limiter and off-by-default rule described below were replaced: the bridge is on by default, binds the first free port of 18793-18797, accepts only `Origin: chrome-extension://<pinned ID>` (ID fixed by the manifest `key` in `extension/extension-key.json`, constant in `src/shared/bridge.ts`), and the extension probes `GET /ping` itself. See `tasks.md` task 13 and `extension/README.md`.
+
 Requirements: `requirements.md` (ER1–ER12). Phase-1 design (`.kiro/specs/phase1-mvp/design.md`) and the steering files stay in force. Section numbers below are referenced from `tasks.md`.
 
 ## 1. Base selection

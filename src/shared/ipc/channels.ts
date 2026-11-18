@@ -43,8 +43,6 @@ export const INVOKE_CHANNELS = [
   'cuda:download',
   'licenses:get',
   'bridge:status',
-  'bridge:code',
-  'bridge:regenerate',
 ] as const
 
 /** Main to renderer push events (webContents.send). */

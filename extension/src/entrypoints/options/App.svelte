@@ -9,8 +9,6 @@
   import { defaultUserSettings, loadUserSettings, saveUserSettings } from "@/lib/user-settings";
 
   const initial = defaultUserSettings();
-  let port = $state(initial.bridgePort);
-  let code = $state(initial.bridgeCode);
   let alwaysInpaint = $state(initial.alwaysInpaint);
   let textFont = $state(initial.textFont);
   let customFonts = $state(initial.customFonts);
@@ -23,8 +21,6 @@
   onMount(async () => {
     try {
       const saved = await loadUserSettings();
-      port = saved.bridgePort;
-      code = saved.bridgeCode;
       alwaysInpaint = saved.alwaysInpaint;
       textFont = saved.textFont;
       customFonts = saved.customFonts;
@@ -39,8 +35,6 @@
     const current = await loadUserSettings();
     await saveUserSettings({
       ...current,
-      bridgePort: port,
-      bridgeCode: code.trim(),
       alwaysInpaint,
       textFont,
       customFonts: $state.snapshot(customFonts),
@@ -50,7 +44,7 @@
 
   $effect(() => {
     if (loading) return;
-    [port, code, alwaysInpaint, textFont, customFonts.length, customRules.length];
+    [alwaysInpaint, textFont, customFonts.length, customRules.length];
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => void save().catch((err) => console.warn("RawReader: settings save failed:", err)), 300);
   });
@@ -67,7 +61,7 @@
   {#if loading}
     <span class="text-xs text-[var(--text-dim)]">加载中…</span>
   {:else}
-    <BridgeSettings bind:port bind:code />
+    <BridgeSettings />
     <InpaintSettings bind:alwaysInpaint />
     <TypographySettings bind:textFont bind:customFonts />
     <SiteRulesSettings bind:customRules />

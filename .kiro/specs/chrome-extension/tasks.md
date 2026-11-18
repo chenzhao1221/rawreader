@@ -1,4 +1,4 @@
-﻿# Chrome extension line: tasks
+# Chrome extension line: tasks
 
 Each task lists its requirements (ER…) and design section (§…). A task is done when its check passes. App-side tasks also require that root `npm run typecheck`, `npm test` and `npm run build` still pass.
 
@@ -74,17 +74,25 @@ Do not commit or push unless asked. Never modify `master`, the sibling folders (
 - [x] 9. **[SKELETON] Import LMT client surface, wire the bridge** (§1.3, §5)
   - [x] 9.1 Copy only the keep/change LMT files listed in §1.3 from `../libre-manga-translator` at commit 1ddddc7, each with a header naming the LMT path, the commit, AGPL-3.0-or-later, and that RawReader modified it. Do not copy WebLLM, in-browser OCR models, the setup wizard, or model-download management.
   - [x] 9.2 Replace `requestBubbleDetection` / `requestTextTranslation` with a bridge client: `POST /translate` (and memoised second call when boxes are unchanged, or a follow-up with `boxes` when the user edited them). Failed units become empty translations so existing skip/paint paths still work.
-  - [x] 9.3 Options page (replaces setup): port, pairing code, test connection, typography/inpaint/site rules, about/licences.
+  - [x] 9.3 Options page (replaces setup): connection state, typography/inpaint/site rules, about/licences. (Port and pairing code were removed in task 13.)
   - [x] 9.4 Extension unit tests for the bridge client mapping and memo logic; port existing LMT tests that still apply. happy-dom is allowed; no real Chrome and no real RawReader window.
   - Check: `cd extension && npm test` passes; a documented manual step can load the WXT output unpacked in Chrome and pair with a running app, but that manual step is not part of default CI.
   - _ER7, ER8, ER6, ER11, ER12_
 
 - [x] 10. **[SKELETON] Gate: desktop tests still all pass** (§8)
   - [x] 10.1 From the repo root, run `npm run typecheck`, `npm test` and `npm run build` headless. Every previously existing desktop test must pass.
-  - [x] 10.2 Confirm `bridge.enabled` defaults to false and a default startup path does not listen.
+  - [x] 10.2 Confirm `bridge.enabled` defaults to false and a default startup path does not listen. (Superseded by task 13: the bridge is now on by default.)
   - [x] 10.3 Confirm no adult-site names or URLs were added, and no `.pem` was committed.
   - Check: the three root commands exit 0; `git status` is only the intended files on branch `extension`.
   - _ER1, ER12_
+
+- [x] 13. **[DONE] Auto-connect: no pairing code, no manual port** (supersedes ER1, ER6 and the pairing parts of ER2)
+  - [x] 13.1 App: `bridge.enabled` defaults to true; the bridge starts with the app on 127.0.0.1, port 18793, then 18794-18797 when taken; the settings tab keeps the on/off switch and start-hidden, and shows the port in use. `bridge.port` and `bridge.extensionId` are removed from the config.
+  - [x] 13.2 App: `pairing.ts`, the pairing secret, the rate limiter and the `bridge:code` / `bridge:regenerate` IPC channels are removed. `guards.ts` accepts only `Origin: chrome-extension://<BRIDGE_EXTENSION_ID>` (403 for any other Origin or none); CORS is granted to that origin only.
+  - [x] 13.3 Extension: the manifest `key` comes from `extension/extension-key.json` so the ID is stable; a root unit test derives the ID from the key and compares it with `src/shared/bridge.ts`.
+  - [x] 13.4 Extension: `probeBridge` tries the cached port, then 18793-18797, on `GET /ping` at browser start and before every translation; the popup shows "请先打开 RawReader" when nothing answers. The options page lost the port and code fields and keeps a connection check.
+  - [x] 13.5 Tests and docs: guards, server, lifecycle (default on, port fallback), schema, IPC, extension client and settings tests; `extension/README.md`.
+  - Check: root `npm run typecheck`, `npm test`, `npm run build` and `cd extension && npm test && npm run typecheck && npm run build` all pass.
 
 ---
 
@@ -102,7 +110,7 @@ Do not commit or push unless asked. Never modify `master`, the sibling folders (
 
 After the skeleton is committed, the author can try the extension in Chrome:
 
-1. Start RawReader, open Settings, enable the extension bridge, show and copy the pairing code.
+1. Start RawReader. The bridge is on by default (Settings → 浏览器插件 shows the port in use).
 2. In Chrome, open `chrome://extensions`, enable Developer mode, Load unpacked, and choose the built `extension/` output directory.
-3. On the extension options page, paste the pairing code and the port (default 18793), then Test connection.
+3. Open the extension popup or options page. It finds the app on its own; **重新检测** re-runs the check.
 4. Open a manga page in Chrome, trigger translate, and confirm boxes and text appear. Use only sites the author already uses for local testing; do not add those URLs to the repository.

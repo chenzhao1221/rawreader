@@ -1,11 +1,9 @@
 // RawReader extension: user settings kept in extension storage. The app owns every translation setting; these
-// are the extension-side ones (connection, appearance, site rules).
-import { isValidPort } from "./bridge/client";
+// are the extension-side ones (appearance, site rules). The connection needs no setting: the extension finds the
+// app by probing its fixed port range.
 import { DefaultConfig } from "./configs";
 
 export interface UserSettings {
-  bridgePort: number;
-  bridgeCode: string;
   autoTranslate: boolean;
   autoTranslateConcurrency: number;
   skipBboxRefining: boolean;
@@ -15,10 +13,8 @@ export interface UserSettings {
   customRules: SiteRule[];
 }
 
-/** Storage key for each field. Port and pairing code stay in `local:` so they never sync to other browsers. */
+/** Storage key for each field. */
 export const USER_SETTING_KEYS = {
-  bridgePort: "local:bridge-port",
-  bridgeCode: "local:bridge-code",
   autoTranslate: "sync:auto-translate",
   autoTranslateConcurrency: "sync:auto-translate-concurrency",
   skipBboxRefining: "sync:skip-bbox-refining",
@@ -30,8 +26,6 @@ export const USER_SETTING_KEYS = {
 
 export function defaultUserSettings(): UserSettings {
   return {
-    bridgePort: DefaultConfig.bridgePort,
-    bridgeCode: "",
     autoTranslate: DefaultConfig.autoTranslate,
     autoTranslateConcurrency: DefaultConfig.autoTranslateConcurrency,
     skipBboxRefining: false,
@@ -51,8 +45,6 @@ export function parseUserSettings(saved: Record<string, unknown>): UserSettings 
   };
   const concurrency = pick("autoTranslateConcurrency", (v) => typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 8);
   return {
-    bridgePort: pick("bridgePort", isValidPort),
-    bridgeCode: pick("bridgeCode", (v) => typeof v === "string"),
     autoTranslate: pick("autoTranslate", (v) => typeof v === "boolean"),
     autoTranslateConcurrency: concurrency,
     skipBboxRefining: pick("skipBboxRefining", (v) => typeof v === "boolean"),

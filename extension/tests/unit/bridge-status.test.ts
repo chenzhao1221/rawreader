@@ -16,10 +16,14 @@ describe("describePingReply", () => {
   });
 
   it("maps a bridge error code to Chinese text", () => {
-    const status = describePingReply({ ok: false, error: { code: "unauthorized", message: "bad" } });
+    const status = describePingReply({ ok: false, error: { code: "forbidden-origin", message: "bad" } });
     expect(status.kind).toBe("error");
     expect(status.text).toMatch(/[\u4e00-\u9fff]/);
     expect(status.text).not.toBe("bad");
+  });
+
+  it("tells the user to open the app when nothing answers", () => {
+    expect(describePingReply({ ok: false, error: { code: "unreachable", message: "x" } })).toEqual({ kind: "error", text: "请先打开 RawReader。" });
   });
 
   it("passes a plain error string from the background worker through", () => {

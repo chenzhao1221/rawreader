@@ -5,6 +5,7 @@
 import { defineConfig } from "wxt";
 import tailwindcss from "@tailwindcss/vite";
 import identity from "../app-identity.json";
+import extensionKey from "./extension-key.json";
 import pkg from "./package.json";
 
 // See https://wxt.dev/api/config.html
@@ -18,6 +19,8 @@ export default defineConfig({
   }),
 
   manifest: {
+    // Pins the extension ID. The app only accepts requests from this ID (BRIDGE_EXTENSION_ID in src/shared/bridge.ts).
+    key: extensionKey.key,
     name: identity.productName,
     version_name: pkg.version,
     description: `${identity.productName} browser extension: sends comic images to the ${identity.productName} app on this computer and draws the translation.`,

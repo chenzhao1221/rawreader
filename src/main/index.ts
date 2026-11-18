@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
 import { app, ipcMain, nativeTheme, net, safeStorage, shell as electronShell } from 'electron'
 import { appIdentity } from '../shared/app-identity'
 import { resolveTheme } from '../shared/theme'
@@ -182,11 +181,10 @@ async function bootstrap(): Promise<void> {
   })
   wiring = pipelineWiring
 
-  // Chrome extension bridge: off by default. It is created here (cheap, nothing listens) and started below only
-  // when ridge.enabled is true.
+  // Chrome extension bridge: on by default. It is created here and started below once config, pipeline and IPC
+  // are wired, unless the user turned it off in settings.
   const bridgeService = createBridge({
     getConfig,
-    updateConfig,
     pipeline: pipelineWiring.pipeline,
     serversUnavailable: () =>
       serversUnavailable(
@@ -194,8 +192,6 @@ async function bootstrap(): Promise<void> {
         getConfig().translate.engine,
         (name) => secrets.has(name),
       ),
-    secrets: { get: (name) => secrets.get(name), set: (name, value) => secrets.set(name, value) },
-    randomBytes: (size) => randomBytes(size),
     appInfo: { productName: appIdentity.productName, version: app.getVersion() },
     logger: createLogger('bridge'),
   })
@@ -378,8 +374,6 @@ async function bootstrap(): Promise<void> {
     getHardware: () => hardwareProbe.get(),
     getLicenses: () => loadLicenses(licenseDocs, (path) => readFile(path, 'utf8')),
     getBridgeStatus: () => bridgeService.getStatus(),
-    showBridgeCode: () => ({ code: bridgeService.showCode() }),
-    regenerateBridgeCode: () => ({ code: bridgeService.regenerateCode() }),
     getCacheStats: () => resultCache?.stats() ?? { entries: 0, bytes: 0 },
     clearCache: () => {
       resultCache?.clear()

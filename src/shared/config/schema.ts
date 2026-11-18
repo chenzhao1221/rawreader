@@ -3,9 +3,6 @@ import { TRANSLATOR_IDS } from '../models/translators'
 import { THEMES } from '../theme'
 import { findForbiddenExtraArgs } from './extra-args'
 
-/** Default port of the Chrome extension bridge (127.0.0.1 only). */
-export const DEFAULT_BRIDGE_PORT = 18793
-
 /** Detector boxes covering at least this share of the image area are discarded as whole-image false positives. */
 export const DEFAULT_MAX_BOX_IMAGE_COVERAGE = 0.85
 
@@ -188,15 +185,12 @@ export const ConfigSchema = z.object({
     })
     .prefault({}),
   cache: z.object({ maxBytes: f.maxBytes.default(2 * 1024 ** 3) }).prefault({}),
-  /** Local bridge for the Chrome extension. Off by default: nothing listens unless the user turns it on. */
+  /** Local bridge for the Chrome extension. On by default; only the pinned extension ID may call it. The port is not configurable (18793-18797, first free). */
   bridge: z
     .object({
-      enabled: f.bool.default(false),
-      port: f.port.default(DEFAULT_BRIDGE_PORT),
+      enabled: f.bool.default(true),
       /** Do not show the main window at startup (the app lives in the tray). Only used while the bridge is enabled. */
       startHidden: f.bool.default(false),
-      /** Extension ID recorded at the first authenticated request (trust on first use); main-process only. */
-      extensionId: z.string().regex(/^[a-p]{32}$/).nullable().default(null),
     })
     .prefault({}),
 })
@@ -272,7 +266,7 @@ export const ConfigPatchSchema = z
       })
       .partial(),
     cache: z.strictObject({ maxBytes: f.maxBytes }).partial(),
-    bridge: z.strictObject({ enabled: f.bool, port: f.port, startHidden: f.bool }).partial(),
+    bridge: z.strictObject({ enabled: f.bool, startHidden: f.bool }).partial(),
   })
   .partial()
 

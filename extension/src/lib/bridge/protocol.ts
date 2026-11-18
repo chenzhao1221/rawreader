@@ -4,6 +4,9 @@
 export const BRIDGE_PROTOCOL_VERSION = 1;
 export const DEFAULT_BRIDGE_PORT = 18793;
 
+/** Ports the app tries in order (first free one wins). Must equal BRIDGE_PORTS in src/shared/bridge.ts of the app. */
+export const BRIDGE_PORTS: readonly number[] = [18793, 18794, 18795, 18796, 18797];
+
 export interface BridgeBox {
   x1: number;
   y1: number;
@@ -90,8 +93,6 @@ export type BridgeTranslateReply =
 
 export interface BridgePingMessage {
   type: "BRIDGE_PING";
-  /** The options page may test values it has not saved yet. */
-  data?: { port?: number; code?: string };
 }
 
 export type BridgePingReply =

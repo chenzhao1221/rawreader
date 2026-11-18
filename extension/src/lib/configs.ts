@@ -2,8 +2,7 @@
 // AGPL-3.0-or-later, (C) 2026 Libre Manga Translator; modified by RawReader.
 //
 // RawReader changes: the model lists (WebLLM, detectors, OCR packs, Gemini), the server defaults and the
-// per-mode timeouts are gone. The default mode is "rawreader" (the app bridge); `bridgePort` is new.
-import { DEFAULT_BRIDGE_PORT } from "./bridge/protocol";
+// per-mode timeouts are gone. The default mode is "rawreader" (the app bridge).
 
 export const DefaultConfig = {
   /** "rawreader": detection, OCR and translation run in the RawReader app on this computer. */
@@ -21,8 +20,6 @@ export const DefaultConfig = {
     },
   ],
 
-  /** Port of the app bridge on 127.0.0.1 (the app default). */
-  bridgePort: DEFAULT_BRIDGE_PORT,
 
   autoTranslate: false,
   autoTranslateConcurrency: 1,

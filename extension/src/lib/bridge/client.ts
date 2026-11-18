@@ -1,6 +1,6 @@
 import {
+  BRIDGE_PORTS,
   BRIDGE_PROTOCOL_VERSION,
-  DEFAULT_BRIDGE_PORT,
   type BridgeBox,
   type BridgeContext,
   type BridgeFailure,
@@ -18,22 +18,7 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface BridgeConnection {
   port: number;
-  /** Pairing code as the user typed it (grouped or not). */
-  code: string;
   fetchImpl?: FetchLike;
-}
-
-const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-
-/**
- * Brings a typed pairing code to the form the app expects: upper case, no separators, look-alikes folded.
- * Returns null when it is not 16 Crockford characters.
- */
-export function normalizeCode(input: string): string | null {
-  const folded = input.toUpperCase().replace(/[\s-]/g, "").replace(/[IL]/g, "1").replace(/O/g, "0");
-  if (folded.length !== 16) return null;
-  for (const char of folded) if (!CROCKFORD.includes(char)) return null;
-  return folded;
 }
 
 export function isValidPort(port: unknown): port is number {
@@ -81,15 +66,9 @@ export function contextToBridge(context: Partial<SeriesContext> | undefined): Br
 /** Simplified Chinese text for each stable error code of the bridge (the app sends English messages). */
 export function describeBridgeError(failure: BridgeFailure): string {
   switch (failure.code) {
-    case "unauthorized":
-      return "配对码不正确，请在 RawReader 设置里重新复制。";
-    case "rate-limited":
-      return "配对码错误次数过多，请一分钟后再试。";
-    case "unknown-extension":
-      return "RawReader 已和另一个插件配对。请在应用里重新生成配对码。";
     case "forbidden-origin":
     case "forbidden-host":
-      return "RawReader 拒绝了这次连接。";
+      return "RawReader 拒绝了这个插件。请使用 RawReader 自带的官方插件构建。";
     case "too-large":
       return "图片太大，RawReader 没有接收。";
     case "unsupported-image":
@@ -101,11 +80,9 @@ export function describeBridgeError(failure: BridgeFailure): string {
     case "MODEL_MISSING":
       return "RawReader 缺少模型文件，请先在应用里下载模型。";
     case "unreachable":
-      return "连不上 RawReader。请确认应用在运行，并已在设置里启用浏览器插件桥接。";
+      return "请先打开 RawReader。";
     case "timeout":
       return "RawReader 没有及时回应。";
-    case "not-configured":
-      return "还没有填写 RawReader 的端口和配对码，请打开插件设置。";
     default:
       return `RawReader 返回了错误（${failure.code}）。`;
   }
@@ -127,33 +104,70 @@ function networkFailure(error: unknown): BridgeFailure {
   return { code: "unreachable", message: "Cannot reach the app" };
 }
 
-/** `GET /ping`: is the app there, paired, and ready to translate. */
-export async function pingBridge(connection: BridgeConnection, timeoutMs = 3000): Promise<BridgePingReply> {
-  const code = normalizeCode(connection.code);
-  if (!isValidPort(connection.port) || code === null) {
-    return { ok: false, error: { code: "not-configured", message: "Port or pairing code missing" } };
-  }
-  const doFetch = connection.fetchImpl ?? ((url, init) => fetch(url, init));
+export type ProbeResult =
+  | { ok: true; port: number; ping: BridgePingResponse }
+  | { ok: false; error: BridgeFailure };
+
+export interface ProbeOptions {
+  /** Port that worked last time; it is tried first. */
+  cachedPort?: number | null | undefined;
+  /** Ports to try after the cached one. Defaults to the app's fixed range. */
+  ports?: readonly number[] | undefined;
+  fetchImpl?: FetchLike | undefined;
+  /** Per port. Localhost refuses at once when nothing listens, so this only bounds a stuck listener. */
+  timeoutMs?: number | undefined;
+}
+
+function isPingBody(body: unknown): body is BridgePingResponse {
+  const b = body as Partial<BridgePingResponse> | null;
+  return typeof b === "object" && b !== null && b.v === BRIDGE_PROTOCOL_VERSION && typeof b.app === "string" && typeof b.ready === "boolean";
+}
+
+/** `GET /ping` on one port. Returns the app's answer, or why there is none. */
+export async function pingPort(port: number, fetchImpl?: FetchLike, timeoutMs = 1500): Promise<{ ok: true; ping: BridgePingResponse } | { ok: false; error: BridgeFailure }> {
+  const doFetch = fetchImpl ?? ((url, init) => fetch(url, init));
   try {
-    const res = await doFetch(bridgeUrl(connection.port, "/ping"), {
-      headers: { Authorization: `Bearer ${code}` },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    const res = await doFetch(bridgeUrl(port, "/ping"), { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return { ok: false, error: await readFailure(res) };
-    const body = (await res.json()) as BridgePingResponse;
-    return {
-      ok: true,
-      ready: body.ready === true,
-      app: body.app,
-      version: body.version,
-      engine: body.engine,
-      ...(body.reason ? { reason: body.reason } : {}),
-    };
+    const body: unknown = await res.json();
+    if (!isPingBody(body)) return { ok: false, error: { code: "not-rawreader", message: "Not a RawReader answer" } };
+    return { ok: true, ping: body };
   } catch (error) {
     return { ok: false, error: networkFailure(error) };
   }
 }
 
+/**
+ * Finds the app: tries the cached port first, then the rest of the fixed range, and returns the first port that
+ * answers `GET /ping` like RawReader. When none does, the error says why: a refusal by the app
+ * (`forbidden-origin`) wins over `unreachable`, so a wrongly packaged extension is not reported as "app closed". Any other\n * failure (nothing listens, another service, a timeout) counts as `unreachable`.
+ */
+export async function probeBridge(options: ProbeOptions = {}): Promise<ProbeResult> {
+  const candidates = [options.cachedPort, ...(options.ports ?? BRIDGE_PORTS)].filter(isValidPort);
+  let refused: BridgeFailure | null = null;
+  for (const port of new Set(candidates)) {
+    const answer = await pingPort(port, options.fetchImpl, options.timeoutMs);
+    if (answer.ok) return { ok: true, port, ping: answer.ping };
+    if (answer.error.code === "forbidden-origin") refused ??= answer.error;
+  }
+  return { ok: false, error: refused ?? { code: "unreachable", message: "Cannot reach the app" } };
+}
+
+/** BRIDGE_PING answer for the popup, sidebar and options page. */
+export async function pingBridge(options: ProbeOptions = {}): Promise<BridgePingReply & { port?: number }> {
+  const found = await probeBridge(options);
+  if (!found.ok) return found;
+  const { ping } = found;
+  return {
+    ok: true,
+    port: found.port,
+    ready: ping.ready,
+    app: ping.app,
+    version: ping.version,
+    engine: ping.engine,
+    ...(ping.reason ? { reason: ping.reason } : {}),
+  };
+}
 export interface TranslateParams {
   bytes: Uint8Array;
   boxes?: BridgeBox[] | undefined;
@@ -165,10 +179,7 @@ export interface TranslateParams {
 
 /** `POST /translate`. Failures come back as `{ error }`, never as a throw. */
 export async function translateViaBridge(connection: BridgeConnection, params: TranslateParams): Promise<BridgeTranslateReply> {
-  const code = normalizeCode(connection.code);
-  if (!isValidPort(connection.port) || code === null) {
-    return { error: { code: "not-configured", message: "Port or pairing code missing" } };
-  }
+  if (!isValidPort(connection.port)) return { error: { code: "unreachable", message: "No port" } };
   const body: BridgeRequest = {
     v: BRIDGE_PROTOCOL_VERSION,
     image: bytesToBase64(params.bytes),
@@ -182,7 +193,7 @@ export async function translateViaBridge(connection: BridgeConnection, params: T
   try {
     const res = await doFetch(bridgeUrl(connection.port, "/translate"), {
       method: "POST",
-      headers: { Authorization: `Bearer ${code}`, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal: AbortSignal.any(signals),
     });

@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   bridgeUrl,
   bytesToBase64,
@@ -6,14 +6,13 @@ import {
   dataUrlToBytes,
   describeBridgeError,
   isValidPort,
-  normalizeCode,
   pingBridge,
+  pingPort,
+  probeBridge,
   translateViaBridge,
   type FetchLike,
 } from "@/lib/bridge/client";
-import type { BridgeTranslateResponse } from "@/lib/bridge/protocol";
-
-const CODE = "ABCD1234EFGH5678";
+import { BRIDGE_PORTS, type BridgeTranslateResponse } from "@/lib/bridge/protocol";
 const OK_BODY: BridgeTranslateResponse = {
   v: 1,
   hash: "h",
@@ -26,23 +25,6 @@ const OK_BODY: BridgeTranslateResponse = {
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-
-describe("normalizeCode", () => {
-  it("accepts grouped, lower-case and spaced input", () => {
-    expect(normalizeCode("abcd-1234-efgh-5678")).toBe(CODE);
-    expect(normalizeCode(" ABCD 1234 EFGH 5678 ")).toBe(CODE);
-  });
-
-  it("folds look-alike characters the way Crockford base32 does", () => {
-    expect(normalizeCode("OOOO-IIII-LLLL-0000")).toBe("0000111111110000");
-  });
-
-  it("rejects wrong length and characters outside the alphabet", () => {
-    expect(normalizeCode("ABCD")).toBeNull();
-    expect(normalizeCode("ABCD1234EFGH567U")).toBeNull();
-    expect(normalizeCode("")).toBeNull();
-  });
-});
 
 describe("isValidPort / bridgeUrl", () => {
   it("accepts unprivileged integer ports only", () => {
@@ -85,84 +67,144 @@ describe("contextToBridge", () => {
 
 describe("describeBridgeError", () => {
   it("gives every known code its own Chinese text and falls back with the code", () => {
-    const codes = ["unauthorized", "rate-limited", "unknown-extension", "too-large", "unsupported-image", "unreachable", "timeout", "not-configured"];
+    const codes = ["forbidden-origin", "too-large", "unsupported-image", "unreachable", "timeout"];
     const texts = codes.map((code) => describeBridgeError({ code, message: "" }));
     expect(new Set(texts).size).toBe(codes.length);
     for (const text of texts) expect(text).toMatch(/[\u4e00-\u9fff]/);
+    expect(describeBridgeError({ code: "unreachable", message: "" })).toBe("请先打开 RawReader。");
     expect(describeBridgeError({ code: "weird", message: "" })).toContain("weird");
   });
 });
 
-describe("pingBridge", () => {
-  it("does not send anything when port or code is missing", async () => {
-    let calls = 0;
-    const fetchImpl: FetchLike = async () => (calls++, json({}));
-    expect(await pingBridge({ port: 18793, code: "short", fetchImpl })).toEqual({
-      ok: false,
-      error: { code: "not-configured", message: "Port or pairing code missing" },
-    });
-    expect(await pingBridge({ port: 80, code: CODE, fetchImpl })).toMatchObject({ ok: false });
-    expect(calls).toBe(0);
+const PING_BODY = { v: 1, app: "App", version: "1.2.3", ready: true, engine: "local" };
+const down: FetchLike = async () => {
+  throw new TypeError("fetch failed");
+};
+const portOf = (url: string): number => Number(new URL(url).port);
+
+describe("BRIDGE_PORTS", () => {
+  it("is the fixed range 18793-18797", () => {
+    expect([...BRIDGE_PORTS]).toEqual([18793, 18794, 18795, 18796, 18797]);
+  });
+});
+
+describe("pingPort", () => {
+  it("sends a plain GET /ping without credentials and returns the app's answer", async () => {
+    let seen: { url: string; headers: Headers } | null = null;
+    const fetchImpl: FetchLike = async (url, init) => ((seen = { url, headers: new Headers(init?.headers) }), json(PING_BODY));
+    expect(await pingPort(18793, fetchImpl)).toEqual({ ok: true, ping: PING_BODY });
+    expect(seen!.url).toBe("http://127.0.0.1:18793/ping");
+    expect(seen!.headers.get("authorization")).toBeNull();
   });
 
-  it("sends the normalised code as a bearer token and maps the reply", async () => {
-    let seen: { url: string; auth: string | null } | null = null;
-    const fetchImpl: FetchLike = async (url, init) => {
-      seen = { url, auth: new Headers(init?.headers).get("authorization") };
-      return json({ v: 1, app: "App", version: "1.2.3", ready: true, engine: "local" });
+  it("rejects an answer that is not RawReader's", async () => {
+    expect(await pingPort(18793, async () => json({ hello: "world" }))).toMatchObject({ ok: false, error: { code: "not-rawreader" } });
+  });
+
+  it("maps an HTTP error body, a non-JSON error, a network error and a timeout", async () => {
+    expect(await pingPort(18793, async () => json({ code: "forbidden-origin", message: "no" }, 403))).toEqual({
+      ok: false,
+      error: { code: "forbidden-origin", message: "no" },
+    });
+    const html: FetchLike = async () => new Response("<html>", { status: 502, statusText: "Bad Gateway" });
+    expect(await pingPort(18793, html)).toMatchObject({ ok: false, error: { code: "http-502" } });
+    expect(await pingPort(18793, down)).toMatchObject({ ok: false, error: { code: "unreachable" } });
+    const timedOut: FetchLike = async () => {
+      throw new DOMException("t", "TimeoutError");
     };
-    const reply = await pingBridge({ port: 18793, code: "abcd-1234-efgh-5678", fetchImpl });
-    expect(seen).toEqual({ url: "http://127.0.0.1:18793/ping", auth: `Bearer ${CODE}` });
-    expect(reply).toEqual({ ok: true, ready: true, app: "App", version: "1.2.3", engine: "local" });
+    expect(await pingPort(18793, timedOut)).toMatchObject({ ok: false, error: { code: "timeout" } });
+  });
+});
+
+describe("probeBridge", () => {
+  it("probes 18793 to 18797 in order and takes the first port that answers", async () => {
+    const tried: number[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      tried.push(portOf(url));
+      if (portOf(url) === 18795) return json(PING_BODY);
+      throw new TypeError("refused");
+    };
+    expect(await probeBridge({ fetchImpl })).toEqual({ ok: true, port: 18795, ping: PING_BODY });
+    expect(tried).toEqual([18793, 18794, 18795]);
+  });
+
+  it("tries the cached port first and does not probe further when it still answers", async () => {
+    const tried: number[] = [];
+    const fetchImpl: FetchLike = async (url) => (tried.push(portOf(url)), json(PING_BODY));
+    expect(await probeBridge({ cachedPort: 18796, fetchImpl })).toMatchObject({ ok: true, port: 18796 });
+    expect(tried).toEqual([18796]);
+  });
+
+  it("falls back to the whole range when the cached port is stale, without trying it twice", async () => {
+    const tried: number[] = [];
+    const fetchImpl: FetchLike = async (url) => {
+      tried.push(portOf(url));
+      if (portOf(url) === 18793) return json(PING_BODY);
+      throw new TypeError("refused");
+    };
+    expect(await probeBridge({ cachedPort: 18797, fetchImpl })).toMatchObject({ ok: true, port: 18793 });
+    expect(tried).toEqual([18797, 18793]);
+  });
+
+  it("ignores an invalid cached port", async () => {
+    const tried: number[] = [];
+    const fetchImpl: FetchLike = async (url) => (tried.push(portOf(url)), json(PING_BODY));
+    await probeBridge({ cachedPort: 80, fetchImpl });
+    expect(tried).toEqual([18793]);
+  });
+
+  it("reports unreachable (open RawReader first) when nothing listens on any port", async () => {
+    const tried: number[] = [];
+    const fetchImpl: FetchLike = async (url) => (tried.push(portOf(url)), down(url));
+    expect(await probeBridge({ fetchImpl })).toMatchObject({ ok: false, error: { code: "unreachable" } });
+    expect(tried).toEqual([...BRIDGE_PORTS]);
+  });
+
+  it("skips another service on a port and keeps looking", async () => {
+    const fetchImpl: FetchLike = async (url) => (portOf(url) === 18793 ? new Response("nope", { status: 404 }) : portOf(url) === 18794 ? json(PING_BODY) : down(url));
+    expect(await probeBridge({ fetchImpl })).toMatchObject({ ok: true, port: 18794 });
+  });
+
+  it("reports a refusal by the app as forbidden-origin, not as unreachable", async () => {
+    const fetchImpl: FetchLike = async (url) => (portOf(url) === 18793 ? json({ code: "forbidden-origin", message: "no" }, 403) : down(url));
+    expect(await probeBridge({ fetchImpl })).toMatchObject({ ok: false, error: { code: "forbidden-origin" } });
+  });
+});
+
+describe("pingBridge", () => {
+  it("maps the found app to a popup reply and includes the port", async () => {
+    const fetchImpl: FetchLike = async (url) => (portOf(url) === 18794 ? json(PING_BODY) : down(url));
+    expect(await pingBridge({ fetchImpl })).toEqual({ ok: true, port: 18794, ready: true, app: "App", version: "1.2.3", engine: "local" });
   });
 
   it("passes on the not-ready reason", async () => {
     const reason = { code: "MODEL_MISSING", message: "no model" };
-    const fetchImpl: FetchLike = async () => json({ v: 1, app: "A", version: "1", ready: false, engine: "local", reason });
-    expect(await pingBridge({ port: 18793, code: CODE, fetchImpl })).toMatchObject({ ok: true, ready: false, reason });
+    const fetchImpl: FetchLike = async () => json({ ...PING_BODY, ready: false, reason });
+    expect(await pingBridge({ fetchImpl })).toMatchObject({ ok: true, ready: false, reason });
   });
 
-  it("maps an HTTP error body, a non-JSON error and a network error", async () => {
-    const unauthorized: FetchLike = async () => json({ code: "unauthorized", message: "bad code" }, 401);
-    expect(await pingBridge({ port: 18793, code: CODE, fetchImpl: unauthorized })).toEqual({
-      ok: false,
-      error: { code: "unauthorized", message: "bad code" },
-    });
-    const html: FetchLike = async () => new Response("<html>", { status: 502, statusText: "Bad Gateway" });
-    expect(await pingBridge({ port: 18793, code: CODE, fetchImpl: html })).toMatchObject({ ok: false, error: { code: "http-502" } });
-    const down: FetchLike = async () => {
-      throw new TypeError("fetch failed");
-    };
-    expect(await pingBridge({ port: 18793, code: CODE, fetchImpl: down })).toMatchObject({ ok: false, error: { code: "unreachable" } });
-  });
-
-  it("reports an aborted or timed-out request as timeout", async () => {
-    const aborted: FetchLike = async () => {
-      throw new DOMException("t", "TimeoutError");
-    };
-    expect(await pingBridge({ port: 18793, code: CODE, fetchImpl: aborted })).toMatchObject({ ok: false, error: { code: "timeout" } });
+  it("returns the error when no app is found", async () => {
+    expect(await pingBridge({ fetchImpl: down })).toMatchObject({ ok: false, error: { code: "unreachable" } });
   });
 });
-
 describe("translateViaBridge", () => {
   it("posts a v1 request with base64 image, clamped priority, context and boxes", async () => {
-    let seen: { url: string; method?: string; body: Record<string, unknown>; auth: string | null } | null = null;
+    let seen: { url: string; method?: string; body: Record<string, unknown> } | null = null;
     const fetchImpl: FetchLike = async (url, init) => {
       seen = {
         url,
         ...(init?.method ? { method: init.method } : {}),
         body: JSON.parse(String(init?.body)) as Record<string, unknown>,
-        auth: new Headers(init?.headers).get("authorization"),
       };
       return json(OK_BODY);
     };
     const boxes = [{ x1: 1, y1: 2, x2: 3, y2: 4, confidence: 0.5 }];
     const reply = await translateViaBridge(
-      { port: 18793, code: CODE, fetchImpl },
+      { port: 18793, fetchImpl },
       { bytes: new Uint8Array([1, 2, 3]), priority: 9_999_999.4, context: { seriesName: "S" }, boxes },
     );
     expect(reply).toEqual({ result: OK_BODY });
-    expect(seen).toMatchObject({ url: "http://127.0.0.1:18793/translate", method: "POST", auth: `Bearer ${CODE}` });
+    expect(seen).toMatchObject({ url: "http://127.0.0.1:18793/translate", method: "POST" });
     expect(seen!.body).toEqual({ v: 1, image: "AQID", priority: 1_000_000, context: { seriesName: "S" }, boxes });
   });
 
@@ -172,22 +214,19 @@ describe("translateViaBridge", () => {
       body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return json(OK_BODY);
     };
-    await translateViaBridge({ port: 18793, code: CODE, fetchImpl }, { bytes: new Uint8Array([0]) });
+    await translateViaBridge({ port: 18793, fetchImpl }, { bytes: new Uint8Array([0]) });
     expect(Object.keys(body).sort()).toEqual(["image", "v"]);
   });
 
   it("returns an error object instead of throwing", async () => {
     const tooLarge: FetchLike = async () => json({ code: "too-large", message: "x" }, 413);
-    expect(await translateViaBridge({ port: 18793, code: CODE, fetchImpl: tooLarge }, { bytes: new Uint8Array() })).toEqual({
+    expect(await translateViaBridge({ port: 18793, fetchImpl: tooLarge }, { bytes: new Uint8Array() })).toEqual({
       error: { code: "too-large", message: "x" },
     });
-    const down: FetchLike = async () => {
-      throw new TypeError("fetch failed");
-    };
-    expect(await translateViaBridge({ port: 18793, code: CODE, fetchImpl: down }, { bytes: new Uint8Array() })).toMatchObject({
+    expect(await translateViaBridge({ port: 18793, fetchImpl: down }, { bytes: new Uint8Array() })).toMatchObject({
       error: { code: "unreachable" },
     });
-    expect(await translateViaBridge({ port: 1, code: CODE }, { bytes: new Uint8Array() })).toMatchObject({ error: { code: "not-configured" } });
+    expect(await translateViaBridge({ port: 1 }, { bytes: new Uint8Array() })).toMatchObject({ error: { code: "unreachable" } });
   });
 
   it("aborts the request when the caller's signal fires", async () => {
@@ -196,7 +235,7 @@ describe("translateViaBridge", () => {
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       });
-    const pending = translateViaBridge({ port: 18793, code: CODE, fetchImpl }, { bytes: new Uint8Array(), signal: controller.signal });
+    const pending = translateViaBridge({ port: 18793, fetchImpl }, { bytes: new Uint8Array(), signal: controller.signal });
     controller.abort();
     expect(await pending).toMatchObject({ error: { code: "timeout" } });
   });

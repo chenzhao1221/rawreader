@@ -6,16 +6,15 @@
 // that talks to the RawReader app: BRIDGE_PING and BRIDGE_TRANSLATE (design 5.1). No tab screenshots.
 import { isAllowedImageUrl } from "@/lib/security";
 import { arrayBufferToBase64DataUrl } from "@/lib/utils";
-import { dataUrlToBytes, pingBridge, translateViaBridge } from "@/lib/bridge/client";
+import { dataUrlToBytes, pingBridge, probeBridge, translateViaBridge } from "@/lib/bridge/client";
 import { PriorityGate } from "@/lib/bridge/gate";
-import { DEFAULT_BRIDGE_PORT } from "@/lib/bridge/protocol";
-import type { BridgePingMessage, BridgePingReply, BridgeTranslateMessage, BridgeTranslateReply } from "@/lib/bridge/protocol";
+import type { BridgePingReply, BridgeTranslateMessage, BridgeTranslateReply } from "@/lib/bridge/protocol";
 import { BRIDGE_TRANSLATE_TIMEOUT_MS, INPAINT_TIMEOUT_MS, MAX_BRIDGE_REQUESTS_PER_TAB } from "@/lib/timeouts";
 import { createAsyncResponder, keepAliveWhile, withTimeout } from "./messaging";
 import { ensureOffscreen } from "./utils";
 
-const BRIDGE_PORT_KEY = "local:bridge-port";
-const BRIDGE_CODE_KEY = "local:bridge-code";
+/** Port that answered last time. Only a hint for the next probe; the app may have moved to another port. */
+const BRIDGE_PORT_CACHE_KEY = "local:bridge-port-cache";
 
 export default defineBackground(() => {
   // ── Per-tab state: a small concurrency cap and an abort switch for navigation ──
@@ -45,12 +44,12 @@ export default defineBackground(() => {
     if (changeInfo.url) abortTab(tabId);
   });
 
-  async function readConnection(override?: { port?: number; code?: string }) {
-    const [port, code] = await Promise.all([
-      storage.getItem<number>(BRIDGE_PORT_KEY),
-      storage.getItem<string>(BRIDGE_CODE_KEY),
-    ]);
-    return { port: override?.port ?? port ?? DEFAULT_BRIDGE_PORT, code: override?.code ?? code ?? "" };
+  /** Probes 18793-18797 (cached port first) and remembers the port that answered. */
+  async function findBridge() {
+    const cachedPort = await storage.getItem<number>(BRIDGE_PORT_CACHE_KEY).catch(() => null);
+    const found = await probeBridge({ cachedPort });
+    if (found.ok && found.port !== cachedPort) await storage.setItem(BRIDGE_PORT_CACHE_KEY, found.port).catch(() => {});
+    return found;
   }
 
   // Fetches an image the way LMT does: through declarativeNetRequest so CDNs that check the Referer accept the request.
@@ -99,9 +98,11 @@ export default defineBackground(() => {
     let release: (() => void) | null = null;
     try {
       release = await gateFor(key).acquire(priority, controller.signal);
-      const connection = await readConnection();
+      // Probe before every translation: the app may have been closed, reopened or moved to another port.
+      const found = await findBridge();
+      if (!found.ok) return { error: found.error };
       const bytes = await imageBytes(src, referer);
-      return await translateViaBridge(connection, { bytes, boxes, context, priority, signal: controller.signal, timeoutMs: BRIDGE_TRANSLATE_TIMEOUT_MS });
+      return await translateViaBridge({ port: found.port }, { bytes, boxes, context, priority, signal: controller.signal, timeoutMs: BRIDGE_TRANSLATE_TIMEOUT_MS });
     } catch (error) {
       if ((error as { name?: string })?.name === "AbortError") return { error: { code: "timeout", message: "Cancelled" } };
       return { error: { code: "image-unavailable", message: (error as Error).message ?? String(error) } };
@@ -111,18 +112,21 @@ export default defineBackground(() => {
     }
   }
 
-  browser.runtime.onInstalled.addListener((details) => {
-    // First run: the options page is where the port and the pairing code go.
-    if (details.reason === "install") void browser.runtime.openOptionsPage();
-  });
+  // Nothing to set up: look for the app at browser start and after an install or update, so the port is cached.
+  browser.runtime.onStartup.addListener(() => void findBridge());
+  browser.runtime.onInstalled.addListener(() => void findBridge());
 
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const respond = createAsyncResponder(sendResponse);
     const respondErr = (err: unknown) => respond({ error: (err as Error).message ?? String(err) });
 
     if (msg.type === "BRIDGE_PING") {
-      const { data } = msg as BridgePingMessage;
-      const run = async (): Promise<BridgePingReply> => pingBridge(await readConnection(data));
+      const run = async (): Promise<BridgePingReply> => {
+        const cachedPort = await storage.getItem<number>(BRIDGE_PORT_CACHE_KEY).catch(() => null);
+        const reply = await pingBridge({ cachedPort });
+        if (reply.ok && reply.port !== cachedPort) await storage.setItem(BRIDGE_PORT_CACHE_KEY, reply.port).catch(() => {});
+        return reply;
+      };
       keepAliveWhile(run().then(respond).catch(respondErr));
       return true;
     }

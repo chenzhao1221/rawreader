@@ -75,7 +75,7 @@ describe('ConfigSchema defaults', () => {
         gemini: { model: 'gemini-2.5-flash' },
       },
       cache: { maxBytes: 2 * 1024 ** 3 },
-      bridge: { enabled: false, port: 18793, startHidden: false, extensionId: null },
+      bridge: { enabled: true, startHidden: false },
     })
   })
 
@@ -94,17 +94,16 @@ describe('ConfigSchema defaults', () => {
 })
 
 describe('bridge config', () => {
-  it('fills the disabled defaults when an old config has no bridge section', () => {
+  it('is enabled by default, also for an old config without a bridge section', () => {
     const old = ConfigSchema.parse({ schemaVersion: 1, ui: { autoTranslate: true } })
-    expect(old.bridge).toEqual({ enabled: false, port: 18793, startHidden: false, extensionId: null })
-    expect(ConfigSchema.parse({}).bridge.enabled).toBe(false)
+    expect(old.bridge).toEqual({ enabled: true, startHidden: false })
+    expect(ConfigSchema.parse({}).bridge.enabled).toBe(true)
   })
 
-  it('keeps the extension ID main-process only and validates the port and ID shapes', () => {
-    expect(ConfigPatchSchema.safeParse({ bridge: { enabled: true, port: 18800 } }).success).toBe(true)
+  it('lets the user switch it off, and has no port or extension ID to set', () => {
+    expect(ConfigPatchSchema.safeParse({ bridge: { enabled: false } }).success).toBe(true)
+    expect(ConfigPatchSchema.safeParse({ bridge: { port: 18800 } }).success).toBe(false)
     expect(ConfigPatchSchema.safeParse({ bridge: { extensionId: 'a'.repeat(32) } }).success).toBe(false)
-    expect(ConfigPatchSchema.safeParse({ bridge: { port: 80 } }).success).toBe(false)
-    expect(ConfigSchema.safeParse({ bridge: { extensionId: 'not-an-id' } }).success).toBe(false)
   })
 })
 

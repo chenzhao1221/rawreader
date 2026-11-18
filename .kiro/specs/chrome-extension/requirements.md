@@ -1,5 +1,7 @@
 # Chrome extension line: requirements
 
+> **Superseded by task 13 (auto-connect).** The pairing code, trust-on-first-use extension ID, rate limiter and off-by-default rule described below were replaced: the bridge is on by default, binds the first free port of 18793-18797, accepts only `Origin: chrome-extension://<pinned ID>` (ID fixed by the manifest `key` in `extension/extension-key.json`, constant in `src/shared/bridge.ts`), and the extension probes `GET /ping` itself. See `tasks.md` task 13 and `extension/README.md`.
+
 Scope: a Chrome (Manifest V3) extension that translates comic images on websites in the user's own Chrome, with the RawReader desktop app doing detection, OCR and translation through a local bridge. Base selection, licensing and module layout are in `design.md`; the work plan is in `tasks.md`.
 
 Requirements use EARS patterns ("WHEN … THE SYSTEM SHALL …", "WHILE …", "IF … THEN …"). "The app" means the RawReader desktop app, "the extension" means the code under `extension/`, "the system" means both. Phase-1 desktop requirements (`.kiro/specs/phase1-mvp/requirements.md`, R1–R15) stay in force; nothing here relaxes them.
