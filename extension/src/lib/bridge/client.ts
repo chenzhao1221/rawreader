@@ -144,7 +144,8 @@ export async function pingPort(port: number, fetchImpl?: FetchLike, timeoutMs = 
 /**
  * Finds the app: tries the cached port first, then the rest of the fixed range, and returns the first port that
  * answers `GET /ping` like RawReader. When none does, the error says why: a refusal by the app
- * (`forbidden-origin`) wins over `unreachable`, so a wrongly packaged extension is not reported as "app closed". Any other\n * failure (nothing listens, another service, a timeout) counts as `unreachable`.
+ * (`forbidden-origin`) wins over `unreachable`, so a wrongly packaged extension is not reported as "app closed". Any other
+ * failure (nothing listens, another service, a timeout) counts as `unreachable`.
  */
 export async function probeBridge(options: ProbeOptions = {}): Promise<ProbeResult> {
   const candidates = [options.cachedPort, ...(options.ports ?? BRIDGE_PORTS)].filter(isValidPort);

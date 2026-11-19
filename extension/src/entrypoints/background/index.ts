@@ -10,6 +10,7 @@ import { isAllowedImageUrl } from "@/lib/security";
 import { arrayBufferToBase64DataUrl } from "@/lib/utils";
 import { dataUrlToBytes, pingBridge, probeBridge, translateViaBridge } from "@/lib/bridge/client";
 import { PriorityGate } from "@/lib/bridge/gate";
+import { installBridgeOriginRule } from "@/lib/bridge/origin";
 import type { BridgePingReply, BridgeTranslateMessage, BridgeTranslateReply } from "@/lib/bridge/protocol";
 import { DefaultConfig } from "@/lib/configs";
 import { translateDirect } from "@/lib/direct/client";
@@ -54,8 +55,14 @@ export default defineBackground(() => {
     if (changeInfo.url) abortTab(tabId);
   });
 
+  // Chrome sends no Origin on a GET from the service worker to a host it has permission for, and the app refuses
+  // requests without the extension's Origin. This session rule adds it (see lib/bridge/origin.ts). It is set each
+  // time the worker starts, and every bridge call waits for it.
+  const originRuleReady = installBridgeOriginRule((browser as any).declarativeNetRequest, browser.runtime.id);
+
   /** Probes 18793-18797 (cached port first) and remembers the port that answered. */
   async function findBridge() {
+    await originRuleReady;
     const cachedPort = await storage.getItem<number>(BRIDGE_PORT_CACHE_KEY).catch(() => null);
     const found = await probeBridge({ cachedPort });
     if (found.ok && found.port !== cachedPort) await storage.setItem(BRIDGE_PORT_CACHE_KEY, found.port).catch(() => {});
@@ -117,6 +124,7 @@ export default defineBackground(() => {
     let release: (() => void) | null = null;
     try {
       release = await gateFor(key).acquire(priority, controller.signal);
+      await originRuleReady;
       // Choose the backend for every request: the app may have been closed, reopened or moved to another port,
       // and the user may have changed the settings.
       const settings = await loadBackendSettings();
@@ -171,6 +179,7 @@ export default defineBackground(() => {
 
     if (msg.type === "BRIDGE_PING") {
       const run = async (): Promise<BridgePingReply> => {
+        await originRuleReady;
         const cachedPort = await storage.getItem<number>(BRIDGE_PORT_CACHE_KEY).catch(() => null);
         const reply = await pingBridge({ cachedPort });
         if (reply.ok && reply.port !== cachedPort) await storage.setItem(BRIDGE_PORT_CACHE_KEY, reply.port).catch(() => {});
@@ -182,6 +191,7 @@ export default defineBackground(() => {
 
     if (msg.type === "BACKEND_STATUS") {
       const run = async (): Promise<BackendStatusReply> => {
+        await originRuleReady;
         const settings = await loadBackendSettings();
         const cachedPort = await storage.getItem<number>(BRIDGE_PORT_CACHE_KEY).catch(() => null);
         const ping = settings.choice === "direct" ? null : await pingBridge({ cachedPort });
