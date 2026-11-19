@@ -6,7 +6,7 @@
   import { Plug, Settings as SettingsIcon, CircleCheck, CircleAlert } from "lucide-svelte";
   import { onDestroy, onMount } from "svelte";
   import { getSiteRule } from "@/lib/adapters";
-  import { describePingReply } from "@/lib/bridge/status";
+  import { describeBackendStatus } from "@/lib/direct/status";
   import { defaultUserSettings, loadUserSettings, saveUserSettings, type UserSettings } from "@/lib/user-settings";
   import {
     loadSeriesContext,
@@ -37,7 +37,7 @@
   async function checkConnection() {
     status = { kind: "checking", text: "正在检查连接…" };
     try {
-      status = describePingReply(await browser.runtime.sendMessage({ type: "BRIDGE_PING" }));
+      status = describeBackendStatus(await browser.runtime.sendMessage({ type: "BACKEND_STATUS" }));
     } catch (err) {
       status = { kind: "error", text: `检查失败：${(err as Error).message ?? err}` };
     }

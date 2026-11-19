@@ -7,6 +7,7 @@ import tailwindcss from "@tailwindcss/vite";
 import identity from "../app-identity.json";
 import extensionKey from "./extension-key.json";
 import pkg from "./package.json";
+import { presetHostPatterns } from "./src/lib/direct/providers";
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -23,10 +24,14 @@ export default defineConfig({
     key: extensionKey.key,
     name: identity.productName,
     version_name: pkg.version,
-    description: `${identity.productName} browser extension: sends comic images to the ${identity.productName} app on this computer and draws the translation.`,
+    description: `${identity.productName} browser extension: sends comic images to the ${identity.productName} app on this computer (or to a vision API you configure) and draws the translation.`,
     permissions: ["activeTab", "offscreen", "storage", "unlimitedStorage", "declarativeNetRequest"],
-    // `<all_urls>` also covers http://127.0.0.1/* (the app bridge) and the image hosts.
-    host_permissions: ["<all_urls>"],
+    // `<all_urls>` covers the image hosts, http://127.0.0.1/* (the app bridge) and the direct API hosts.
+    // The preset API hosts are also listed on their own so they stay granted if `<all_urls>` is ever narrowed.
+    host_permissions: ["<all_urls>", ...presetHostPatterns()],
+    // Direct API mode with a custom Base URL: the options page asks for the one host at run time
+    // (https only; plain http only for the local machine, see validateBaseUrl in src/lib/direct/providers.ts).
+    optional_host_permissions: ["https://*/*", "http://127.0.0.1/*", "http://localhost/*"],
     web_accessible_resources: [
       {
         resources: ["/offscreen.html", "/content-scripts/*", "/fonts/*", "/icon/*"],

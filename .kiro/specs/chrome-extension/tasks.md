@@ -98,8 +98,15 @@ Do not commit or push unless asked. Never modify `master`, the sibling folders (
 
 ## Later slice
 
-- [ ] 11. **[LATER] Optional direct Gemini mode** (§7, ER9)
-  - Behind a flag. May keep LMT's 11 MB detector and Gemini path in the extension. OpenAI-compatible endpoints still go through the app bridge. Not required for the skeleton to ship.
+- [x] 11. **[DONE] Direct API mode** (§7, ER9; supersedes the "direct Gemini behind a flag" idea)
+  - [x] 11.1 Backend choice in the options page: RawReader / direct API / auto (default: RawReader when running and ready, else the configured API, else a Chinese hint and the options page opens). `src/lib/direct/select.ts`.
+  - [x] 11.2 Providers: Gemini (native `generateContent`) and OpenAI-compatible (`/chat/completions`) with presets for Gemini, Zhipu GLM-4V-Flash and SiliconFlow plus a custom entry; base URL, key and model editable. `src/lib/direct/providers.ts`, `request.ts`.
+  - [x] 11.3 One request does detection, reading and translation: the image is shrunk (2048 px, about 3.5 MB), the prompt asks for JSON boxes (0-1000) and translations in the existing target language; the answer is mapped to the bridge response shape so `BridgeMemo` and the overlay are reused. No in-browser detector, onnxruntime or WASM, so the build flag from ER9.2 is not needed. `prompt.ts`, `image.ts`, `client.ts`.
+  - [x] 11.4 Tolerant parser: fences, chatter, other key names, `box_2d`, pixel or fraction coordinates, cut-off answers; plain text becomes one translation in a banner box; items without boxes are stacked. `parse.ts`.
+  - [x] 11.5 Privacy: key only in `chrome.storage.local`, read only by the background worker and options page, sent in a header, scrubbed from error messages, never logged. Manifest `host_permissions` gains the three preset API hosts; `optional_host_permissions` plus a run-time `permissions.request` cover custom Base URLs (https, or http for loopback).
+  - [x] 11.6 Tests with mocked `fetch` (no real API): request construction, response parsing, degradation, errors and key scrubbing, image shrinking, backend selection. `extension/tests/unit/direct-*.test.ts`.
+  - Check: `cd extension && npm test && npm run typecheck && npm run build` pass. Not covered by tests: the browser image codec (`OffscreenCanvas`) and the options form; try them by hand with a real key.
+  - Note: ER9.1 and ER10 text about "OpenAI-compatible endpoints only through the app" and "only to 127.0.0.1 or Gemini" is superseded: in direct mode images go to the API host the user configured.
 
 - [ ] 12. **[LATER] End-to-end opt-in test** (§8)
   - `RAWREADER_E2E=1` only; still no unnecessary windows; not part of default `npm test`.

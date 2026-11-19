@@ -1,3 +1,4 @@
+import { describeDirectError } from "../direct/errors";
 import {
   BRIDGE_PORTS,
   BRIDGE_PROTOCOL_VERSION,
@@ -65,6 +66,9 @@ export function contextToBridge(context: Partial<SeriesContext> | undefined): Br
 
 /** Simplified Chinese text for each stable error code of the bridge (the app sends English messages). */
 export function describeBridgeError(failure: BridgeFailure): string {
+  // Direct API mode (and "no backend") use the same failure shape with their own codes.
+  const direct = describeDirectError(failure);
+  if (direct) return direct;
   switch (failure.code) {
     case "forbidden-origin":
     case "forbidden-host":
