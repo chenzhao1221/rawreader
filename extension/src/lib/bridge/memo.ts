@@ -115,6 +115,11 @@ export class BridgeMemo {
     return responseToTranslation(edited.result);
   }
 
+  /** The note of the last detection answer, if any. Stays set until the memo is reset. */
+  get notice(): string | null {
+    return this.full?.notice ?? null;
+  }
+
   /** Forget the stored answer (the overlay was closed or the page was reset). */
   reset(): void {
     this.full = null;

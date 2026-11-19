@@ -7,6 +7,9 @@
   import { describeDirectError } from "@/lib/direct/errors";
   import {
     PROVIDER_PRESETS,
+    DEFAULT_MAX_TOKENS,
+    MAX_MAX_TOKENS,
+    MIN_MAX_TOKENS,
     getPreset,
     isDirectConfigured,
     isPresetOrigin,
@@ -26,6 +29,8 @@
   let baseUrl = $state("");
   let apiKey = $state("");
   let model = $state("");
+  let maxTokens = $state(DEFAULT_MAX_TOKENS);
+  let disableThinking = $state(true);
   let showKey = $state(false);
   let outcome = $state<{ kind: "ok" | "error"; text: string } | null>(null);
 
@@ -46,6 +51,8 @@
       baseUrl = saved.direct.baseUrl || defaults.baseUrl;
       model = saved.direct.model || defaults.models[0] || "";
       apiKey = saved.direct.apiKey;
+      maxTokens = saved.direct.maxTokens;
+      disableThinking = saved.direct.disableThinking;
     } finally {
       loading = false;
     }
@@ -61,7 +68,21 @@
     outcome = null;
   }
 
-  const current = (): DirectApiSettings => ({ provider, baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: model.trim() });
+  const current = (): DirectApiSettings => ({
+    provider,
+    baseUrl: baseUrl.trim(),
+    apiKey: apiKey.trim(),
+    model: model.trim(),
+    maxTokens: clampMaxTokens(maxTokens),
+    disableThinking,
+  });
+
+  /** A whole number inside the allowed range; anything else (an empty or wrong field) gives the default. */
+  function clampMaxTokens(value: number): number {
+    const n = Math.round(Number(value));
+    if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_TOKENS;
+    return Math.min(MAX_MAX_TOKENS, Math.max(MIN_MAX_TOKENS, n));
+  }
 
   /** Validates the form, asks for the host permission when the host is not a preset, and saves. */
   async function save(): Promise<DirectApiSettings | null> {
@@ -184,6 +205,21 @@
           {/each}
         </datalist>
       </label>
+
+      <details class="flex flex-col gap-1.5 text-[11px]">
+        <summary class="cursor-pointer font-bold text-[var(--text-muted)]">高级设置</summary>
+        <label class="space-y-1">
+          <span class={label}>输出上限（tokens）</span>
+          <input class={field} type="number" min={MIN_MAX_TOKENS} max={MAX_MAX_TOKENS} step="256" bind:value={maxTokens} />
+          <span class="text-[10px] text-[var(--text-muted)]">
+            长图或字多的页面需要更大的上限。服务商拒绝这个数值时，插件会自动改用更小的值重试一次。glm-4v-flash 最多 1024。
+          </span>
+        </label>
+        <label class="flex items-start gap-1.5 cursor-pointer">
+          <input type="checkbox" class="mt-0.5" bind:checked={disableThinking} />
+          <span>关闭模型思考（更快、更省输出）。只对智谱 GLM 和阿里云百炼生效。</span>
+        </label>
+      </details>
 
       <p class="text-[11px] text-[var(--text-muted)] leading-snug">{preset.hint}</p>
       {#if !isPresetOrigin(baseUrl)}

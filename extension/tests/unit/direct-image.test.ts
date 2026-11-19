@@ -37,6 +37,7 @@ const fakeCodec = (size: { width: number; height: number }, encodedSizes: number
   return {
     measure: async () => size,
     encodeJpeg: vi.fn(async () => new Uint8Array(encodedSizes[Math.min(call++, encodedSizes.length - 1)]!)),
+    cropEncodeJpeg: async () => new Uint8Array(0),
   };
 };
 
@@ -59,7 +60,7 @@ describe("prepareImage", () => {
   it("scales a large image down and reports both sizes", async () => {
     const codec = fakeCodec({ width: 3000, height: 4096 }, [100]);
     const out = await prepareImage(PNG, codec);
-    expect(out).toMatchObject({ reencoded: true, width: 1500, height: 2048, originalWidth: 3000, originalHeight: 4096 });
+    expect(out).toMatchObject({ reencoded: true, width: 2250, height: 3072, originalWidth: 3000, originalHeight: 4096 });
   });
 
   it("re-encodes an oversized file and steps down until it fits", async () => {

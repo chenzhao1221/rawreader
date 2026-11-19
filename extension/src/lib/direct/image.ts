@@ -2,7 +2,7 @@
 // decoding and encoding come in through `ImageCodec` (the browser one is in image-browser.ts).
 
 /** Longest side sent to the model. Vision models downscale larger images themselves, so more only costs bytes. */
-export const MAX_SEND_SIDE = 2048;
+export const MAX_SEND_SIDE = 3072;
 
 /** Largest file sent. Base64 adds a third, and some services reject request images above about 5 MB. */
 export const MAX_SEND_BYTES = 3_500_000;
@@ -33,18 +33,30 @@ export function fitWithin(width: number, height: number, maxSide: number): { wid
 
 /** Re-encode attempts in order: each one is smaller than the one before. */
 export const ENCODE_ATTEMPTS: ReadonlyArray<{ scale: number; quality: number }> = [
-  { scale: 1, quality: 0.85 },
+  { scale: 1, quality: 0.9 },
   { scale: 1, quality: 0.7 },
   { scale: 0.75, quality: 0.7 },
   { scale: 0.5, quality: 0.6 },
   { scale: 0.35, quality: 0.5 },
 ];
 
+export interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface ImageCodec {
   /** Pixel size of the encoded image. Rejects when the bytes are not an image the browser can decode. */
   measure(bytes: Uint8Array): Promise<{ width: number; height: number }>;
   /** Decodes, draws at `width` x `height` on a white background and encodes as JPEG. */
   encodeJpeg(bytes: Uint8Array, width: number, height: number, quality: number): Promise<Uint8Array>;
+  /**
+   * Decodes, takes the rectangle (`x`, `y`, `w`, `h` in pixels of the decoded image), draws it at `width` x `height`
+   * on a white background and encodes as JPEG. Used to cut long strips into segments.
+   */
+  cropEncodeJpeg(bytes: Uint8Array, rect: CropRect, width: number, height: number, quality: number): Promise<Uint8Array>;
 }
 
 export interface PreparedImage {

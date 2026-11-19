@@ -11,12 +11,16 @@ const gemini: DirectApiSettings = {
   baseUrl: "https://generativelanguage.googleapis.com/v1beta/",
   apiKey: KEY,
   model: "gemini-2.5-flash",
+  maxTokens: 8192,
+  disableThinking: true,
 };
 const zhipu: DirectApiSettings = {
   provider: "zhipu",
   baseUrl: "https://open.bigmodel.cn/api/paas/v4",
   apiKey: KEY,
   model: "glm-4v-flash",
+  maxTokens: 8192,
+  disableThinking: true,
 };
 
 function built(settings: DirectApiSettings, img: typeof image | null = image) {
@@ -57,12 +61,12 @@ describe("buildRequest: OpenAI compatible", () => {
     expect(body.messages[0].content[0]).toEqual({ type: "text", text: "PROMPT" });
     expect(body.messages[0].content[1]).toEqual({ type: "image_url", image_url: { url: "data:image/jpeg;base64,QUJD" } });
     expect(body.stream).toBe(false);
-    expect(body.max_tokens).toBeUndefined();
+    expect(body.max_tokens).toBe(1024); // glm-4v-flash caps the output at 1024
     expect(req.body).not.toContain(KEY);
   });
 
   it("uses the custom base URL as given", () => {
-    const req = built({ provider: "custom", baseUrl: "http://127.0.0.1:1234/v1/", apiKey: KEY, model: "m" });
+    const req = built({ provider: "custom", baseUrl: "http://127.0.0.1:1234/v1/", apiKey: KEY, model: "m", maxTokens: 8192, disableThinking: true });
     expect(req.url).toBe("http://127.0.0.1:1234/v1/chat/completions");
   });
 });

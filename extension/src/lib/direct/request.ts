@@ -1,6 +1,6 @@
 // RawReader extension: direct API mode. Request construction and answer text extraction (pure).
 // The API key only appears in the request headers of the object these functions return.
-import { apiStyleOf, validateBaseUrl, type DirectApiSettings } from "./providers";
+import { apiStyleOf, validateBaseUrl, type DirectApiSettings, type ProviderId } from "./providers";
 
 export interface ApiImage {
   /** MIME type of `base64`, for example "image/jpeg". */
@@ -19,8 +19,8 @@ export const GEMINI_MAX_OUTPUT_TOKENS = 8192;
 
 export type BuildResult = { ok: true; request: BuiltRequest } | { ok: false; reason: string };
 
-/** Request for an image (and the instruction), or for a text-only test when `image` is null. */
-export function buildRequest(settings: DirectApiSettings, prompt: string, image: ApiImage | null): BuildResult {
+/** Request for an image (and the instruction), or for a text-only test when `image` is null. `maxTokens` overrides the saved limit (used when a service refuses it). */
+export function buildRequest(settings: DirectApiSettings, prompt: string, image: ApiImage | null, maxTokens?: number): BuildResult {
   const base = validateBaseUrl(settings.baseUrl);
   if (!base.ok) return { ok: false, reason: base.reason };
   const model = settings.model.trim();
@@ -49,11 +49,10 @@ export function buildRequest(settings: DirectApiSettings, prompt: string, image:
     };
   }
 
-  // OpenAI-compatible. No max_tokens: services differ in their limits (glm-4v-flash allows only 1024), so the
-  // service default applies and the parser recovers items from a cut-off answer. One user message holds the
-  // text and the image; some vision models reject a system role.
+  // OpenAI-compatible. One user message holds the text and the image; some vision models reject a system role.
   const content: unknown[] = [{ type: "text", text: prompt }];
   if (image) content.push({ type: "image_url", image_url: { url: `data:${image.mime};base64,${image.base64}` } });
+  const limit = effectiveMaxTokens(model, maxTokens ?? settings.maxTokens);
   return {
     ok: true,
     request: {
@@ -64,10 +63,45 @@ export function buildRequest(settings: DirectApiSettings, prompt: string, image:
         messages: [{ role: "user", content }],
         temperature: 0.2,
         stream: false,
+        max_tokens: limit,
+        ...thinkingFieldsFor(settings.provider, settings.disableThinking),
       }),
     },
   };
 }
+
+/** Output limit for a model: glm-4v-flash accepts at most 1024 tokens, so a larger request would be refused. */
+export function effectiveMaxTokens(model: string, requested: number): number {
+  const cap = model.trim().toLowerCase() === "glm-4v-flash" ? 1024 : Number.POSITIVE_INFINITY;
+  return Math.min(requested, cap);
+}
+
+/** Extra body fields that switch thinking off, for the services that have such a switch. Others get none. */
+export function thinkingFieldsFor(provider: ProviderId, disableThinking: boolean): Record<string, unknown> {
+  if (!disableThinking) return {};
+  if (provider === "zhipu") return { thinking: { type: "disabled" } };
+  if (provider === "dashscope") return { enable_thinking: false };
+  return {};
+}
+
+/** True when a failed response says the output limit is too large (HTTP 400 that names max_tokens). */
+export function isMaxTokensError(status: number, detail: string): boolean {
+  return status === 400 && /max_tokens/i.test(detail);
+}
+
+/** True when the service stopped the answer at the output limit. */
+export function answerTruncated(settings: Pick<DirectApiSettings, "provider">, body: unknown): boolean {
+  if (!isRecord(body)) return false;
+  if (apiStyleOf(settings) === "gemini") {
+    const candidates = body["candidates"];
+    const first = Array.isArray(candidates) ? candidates[0] : undefined;
+    return isRecord(first) && first["finishReason"] === "MAX_TOKENS";
+  }
+  const choices = body["choices"];
+  const first = Array.isArray(choices) ? choices[0] : undefined;
+  return isRecord(first) && first["finish_reason"] === "length";
+}
+
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 

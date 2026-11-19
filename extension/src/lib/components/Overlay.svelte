@@ -36,6 +36,8 @@
       | undefined
     >;
     requestBubbleDetection: () => Promise<Bbox[] | { error: string }>;
+    /** Note from the last detection answer that the user should see (for example a cut-off answer). */
+    getNotice?: () => string | null;
     requestTextTranslation: (
       bboxes: Bbox[],
       isManuallySorted: boolean,
@@ -86,6 +88,7 @@
     onBackToRefine,
     getCleanedSrc,
     applyInpaintPatches,
+    getNotice,
   }: Props = $props();
 
   const rawDisplaySrc = $derived(rawImageUrl || originalSrc);
@@ -790,6 +793,9 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       }
       return;
     }
+
+    const notice = getNotice?.();
+    if (notice) addToast(notice, "warn");
 
     if (rawBboxes.length === 0) {
       showError("未检测到文字气泡，请手动添加文本框");

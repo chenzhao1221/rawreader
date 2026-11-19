@@ -50,7 +50,7 @@ The options page has a **翻译后端** card with three choices:
 | 只用 RawReader | Never uses the API. |
 | 只用直连 API | Never probes the app. |
 
-In direct mode the extension sends the image you selected or hovered (shrunk to at most 2048 px on the long side and about 3.5 MB, re-encoded as JPEG only when needed) to the vision model in **one request**. The model finds the text, reads it and translates it into the target language already set in the extension (`sync:target-lang`, default Simplified Chinese), and answers with JSON:
+In direct mode the extension sends the image you selected or hovered (shrunk to at most 3072 px on the long side and about 3.5 MB, re-encoded as JPEG only when needed) to the vision model in **one request**. The model finds the text, reads it and translates it into the target language already set in the extension (`sync:target-lang`, default Simplified Chinese), and answers with JSON:
 
 ```json
 {"items":[{"box":[x1,y1,x2,y2],"source":"original text","translation":"translated text"}]}
@@ -67,7 +67,7 @@ Presets (all fields stay editable):
 | 硅基流动 | `https://api.siliconflow.cn/v1` | `Qwen/Qwen2.5-VL-32B-Instruct`, `Qwen/Qwen2.5-VL-72B-Instruct`, `Pro/Qwen/Qwen2.5-VL-7B-Instruct` |
 | 自定义 (OpenAI compatible) | your own, `https` (plain `http` only for `localhost` / `127.0.0.1`) | any model that accepts images |
 
-Gemini uses its native `generateContent` API; the others use `POST <base>/chat/completions`. Box accuracy varies by model: Gemini and Qwen-VL place boxes well, small free models less so. Very long strips are shrunk to 2048 px on the long side, so tiny text on them may not be read; translate such images in parts with a box selection.
+Gemini uses its native `generateContent` API; the others use `POST <base>/chat/completions`. Box accuracy varies by model: Gemini and Qwen-VL place boxes well, small free models less so. Very tall strips (more than twice as tall as wide) are cut into overlapping segments at their original resolution, one request per segment, and the boxes are mapped back to the whole image. Other images are shrunk to 3072 px on the long side. The output length is set in the options page under advanced settings (default 8192 tokens). If the service cuts an answer short, the overlay shows a note.
 
 Privacy and permissions:
 

@@ -312,6 +312,7 @@ export default defineContentScript({
                 scaleY,
                 originalSrc,
                 rawImageUrl: src,
+                getNotice: () => bridgeMemo.notice,
 
                 getTranslationCache: async () => {
                   const cache = await storage.getItem<PageCache>(

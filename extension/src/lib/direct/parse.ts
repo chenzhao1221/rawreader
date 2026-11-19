@@ -187,6 +187,12 @@ function plainText(raw: string): string {
     .trim();
 }
 
+/** True when the answer starts like JSON but does not parse: the service cut it off or it was malformed. */
+export function looksTruncated(raw: string): boolean {
+  if (!/^[\[{]/.test(stripFence(raw))) return false;
+  return extractJson(raw) === undefined;
+}
+
 export function parseModelOutput(raw: string, opts: ParseOptions): ParseResult {
   const regions = opts.regions && opts.regions.length > 0 ? opts.regions : undefined;
 

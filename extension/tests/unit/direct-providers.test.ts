@@ -13,11 +13,15 @@ import {
 } from "@/lib/direct/providers";
 
 describe("presets", () => {
-  it("offers Gemini, Zhipu, SiliconFlow and a custom entry with models and base URLs", () => {
-    expect(PROVIDER_PRESETS.map((p) => p.id)).toEqual(["gemini", "zhipu", "siliconflow", "custom"]);
-    expect(getPreset("zhipu").models[0]).toBe("glm-4v-flash");
+  it("offers Gemini, Zhipu, SiliconFlow, Bailian, Volcengine and a custom entry with models and base URLs", () => {
+    expect(PROVIDER_PRESETS.map((p) => p.id)).toEqual(["gemini", "zhipu", "siliconflow", "dashscope", "volcengine", "custom"]);
+    expect(getPreset("zhipu").models[0]).toBe("glm-4.6v-flash");
     expect(getPreset("gemini").baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta");
     expect(getPreset("siliconflow").baseUrl).toBe("https://api.siliconflow.cn/v1");
+    expect(getPreset("dashscope").baseUrl).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1");
+    expect(getPreset("dashscope").models).toEqual(["qwen3-vl-flash", "qwen3-vl-plus"]);
+    expect(getPreset("volcengine").baseUrl).toBe("https://ark.cn-beijing.volces.com/api/v3");
+    expect(getPreset("volcengine").models).toEqual([]);
     expect(getPreset("custom").baseUrl).toBe("");
   });
 
@@ -30,6 +34,8 @@ describe("presets", () => {
   it("lists exactly the preset hosts as manifest host permissions", () => {
     expect(presetHostPatterns().sort()).toEqual([
       "https://api.siliconflow.cn/*",
+      "https://ark.cn-beijing.volces.com/*",
+      "https://dashscope.aliyuncs.com/*",
       "https://generativelanguage.googleapis.com/*",
       "https://open.bigmodel.cn/*",
     ]);
@@ -75,7 +81,7 @@ describe("originPatternFor", () => {
 });
 
 describe("isDirectConfigured / parseDirectSettings", () => {
-  const ok = { provider: "zhipu" as const, baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiKey: "k-123456", model: "glm-4v-flash" };
+  const ok = { provider: "zhipu" as const, baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiKey: "k-123456", model: "glm-4v-flash", maxTokens: 8192, disableThinking: true };
 
   it("needs key, model and a valid base URL", () => {
     expect(isDirectConfigured(ok)).toBe(true);
@@ -92,8 +98,19 @@ describe("isDirectConfigured / parseDirectSettings", () => {
       baseUrl: "",
       apiKey: "k",
       model: "",
+      maxTokens: 8192,
+      disableThinking: true,
     });
     expect(parseDirectSettings(ok)).toEqual(ok);
+  });
+
+  it("keeps a valid output limit and thinking switch, and drops wrong ones", () => {
+    const saved = { ...ok, maxTokens: 4096, disableThinking: false };
+    expect(parseDirectSettings(saved)).toMatchObject({ maxTokens: 4096, disableThinking: false });
+    expect(parseDirectSettings({ ...ok, maxTokens: 99999 }).maxTokens).toBe(8192);
+    expect(parseDirectSettings({ ...ok, maxTokens: 1.5 }).maxTokens).toBe(8192);
+    expect(parseDirectSettings({ ...ok, maxTokens: "4096" }).maxTokens).toBe(8192);
+    expect(parseDirectSettings({ ...ok, disableThinking: "no" }).disableThinking).toBe(true);
   });
 
   it("defaults point at the Gemini preset with no key", () => {

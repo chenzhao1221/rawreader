@@ -42,6 +42,8 @@ export interface BridgeTranslateResponse {
   cached: boolean;
   units: BridgeUnit[];
   timings: { detectMs: number; ocrMs: number; translateMs: number };
+  /** Extension-side note for the user (direct API mode only), for example that the answer was cut short. */
+  notice?: string;
 }
 
 export interface BridgePingResponse {
