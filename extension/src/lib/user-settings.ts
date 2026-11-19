@@ -11,6 +11,8 @@ export interface UserSettings {
   textFont: string;
   customFonts: { name: string; dataUrl: string }[];
   customRules: SiteRule[];
+  /** When detection fails with an error, only show the error; offer manual box selection for "no text found" only. */
+  manualSelectOnlyWhenNoText: boolean;
 }
 
 /** Storage key for each field. */
@@ -22,6 +24,7 @@ export const USER_SETTING_KEYS = {
   textFont: "sync:text-font",
   customFonts: "local:custom-fonts",
   customRules: "sync:custom-site-rules",
+  manualSelectOnlyWhenNoText: "local:manual-select-only-when-no-text",
 } as const satisfies Record<keyof UserSettings, `${"local" | "sync"}:${string}`>;
 
 export function defaultUserSettings(): UserSettings {
@@ -33,6 +36,7 @@ export function defaultUserSettings(): UserSettings {
     textFont: DefaultConfig.bundleFonts[0]!.id,
     customFonts: [],
     customRules: [],
+    manualSelectOnlyWhenNoText: true,
   };
 }
 
@@ -52,6 +56,7 @@ export function parseUserSettings(saved: Record<string, unknown>): UserSettings 
     textFont: pick("textFont", (v) => typeof v === "string" && v.length > 0),
     customFonts: pick("customFonts", Array.isArray),
     customRules: pick("customRules", Array.isArray),
+    manualSelectOnlyWhenNoText: pick("manualSelectOnlyWhenNoText", (v) => typeof v === "boolean"),
   };
 }
 

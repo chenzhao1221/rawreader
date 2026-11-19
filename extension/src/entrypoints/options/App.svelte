@@ -5,12 +5,14 @@
   import DirectApiSettings from "@/lib/components/settings/DirectApiSettings.svelte";
   import BridgeSettings from "@/lib/components/settings/BridgeSettings.svelte";
   import InpaintSettings from "@/lib/components/settings/InpaintSettings.svelte";
+  import ManualSelectSettings from "@/lib/components/settings/ManualSelectSettings.svelte";
   import TypographySettings from "@/lib/components/settings/TypographySettings.svelte";
   import SiteRulesSettings from "@/lib/components/settings/SiteRulesSettings.svelte";
   import { defaultUserSettings, loadUserSettings, saveUserSettings } from "@/lib/user-settings";
 
   const initial = defaultUserSettings();
   let alwaysInpaint = $state(initial.alwaysInpaint);
+  let manualSelectOnlyWhenNoText = $state(initial.manualSelectOnlyWhenNoText);
   let textFont = $state(initial.textFont);
   let customFonts = $state(initial.customFonts);
   let customRules = $state(initial.customRules);
@@ -23,6 +25,7 @@
     try {
       const saved = await loadUserSettings();
       alwaysInpaint = saved.alwaysInpaint;
+      manualSelectOnlyWhenNoText = saved.manualSelectOnlyWhenNoText;
       textFont = saved.textFont;
       customFonts = saved.customFonts;
       customRules = saved.customRules;
@@ -37,6 +40,7 @@
     await saveUserSettings({
       ...current,
       alwaysInpaint,
+      manualSelectOnlyWhenNoText,
       textFont,
       customFonts: $state.snapshot(customFonts),
       customRules: $state.snapshot(customRules),
@@ -45,7 +49,8 @@
 
   $effect(() => {
     if (loading) return;
-    [alwaysInpaint, textFont, customFonts.length, customRules.length];
+    [alwaysInpaint, manualSelectOnlyWhenNoText, textFont, customFonts.length, customRules.length];
+
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => void save().catch((err) => console.warn("RawReader: settings save failed:", err)), 300);
   });
@@ -65,6 +70,7 @@
     <DirectApiSettings />
     <BridgeSettings />
     <InpaintSettings bind:alwaysInpaint />
+    <ManualSelectSettings bind:manualSelectOnlyWhenNoText />
     <TypographySettings bind:textFont bind:customFonts />
     <SiteRulesSettings bind:customRules />
 

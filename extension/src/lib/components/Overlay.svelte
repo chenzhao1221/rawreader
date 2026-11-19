@@ -7,6 +7,8 @@
     import { getSiteRule } from "@/lib/adapters";
   import { resolveFontStack } from "@/lib/canvas";
   import * as Registry from "@/entrypoints/content/translation-registry";
+  import { offersManualSelect } from "@/lib/manual-select";
+  import { USER_SETTING_KEYS, defaultUserSettings } from "@/lib/user-settings";
   import {
     OverlayToolbar,
     EditorToolbar,
@@ -333,19 +335,30 @@
     localStorage.setItem("lmt-reading-direction", readingDirection);
   });
 
-  function showError(msg: string) {
+  // Whether dismissing the current error opens manual box selection (false: it only closes the overlay).
+  let errorOffersManual = true;
+
+  function showError(msg: string, offerManual = true) {
     clearTimeout(errorTimer);
     errorMsg = msg;
+    errorOffersManual = offerManual;
     if (ERROR_AUTOCLOSE) {
       errorTimer = setTimeout(() => (errorMsg = ""), 5000);
     }
   }
 
+  async function readManualOnlyNoText(): Promise<boolean> {
+    const saved = await storage.getItem<boolean>(USER_SETTING_KEYS.manualSelectOnlyWhenNoText);
+    return typeof saved === "boolean" ? saved : defaultUserSettings().manualSelectOnlyWhenNoText;
+  }
+
   async function handleErrorDismiss() {
     errorMsg = "";
+    const offerManual = errorOffersManual;
+    errorOffersManual = true;
     const skip =
       await storage.getItem<boolean>("sync:skip-bbox-refining");
-    if (skip ?? false) {
+    if ((skip ?? false) || !offerManual) {
       onClose();
       return;
     }
@@ -450,7 +463,8 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     }
   }
 
-  async function executeTranslation() {
+  // `autoStart`: run from the page load without a user click, so a failure must not open manual selection by default.
+  async function executeTranslation(autoStart = false) {
     mode = "loading";
     applyBboxesSort();
 
@@ -465,8 +479,9 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       isManuallySorted,
     );
     if (typeof result === "object" && "error" in result) {
-      mode = "refining";
-      showError(result.error);
+      const offerManual = !autoStart || offersManualSelect("error", await readManualOnlyNoText());
+      if (offerManual) mode = "refining";
+      showError(result.error, offerManual);
       Registry.markIdle(originalSrc);
       return;
     }
@@ -785,7 +800,8 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       : await requestBubbleDetection();
 
     if (!Array.isArray(rawBboxes)) {
-      showError(rawBboxes?.error);
+      const onlyNoText = await readManualOnlyNoText();
+      showError(rawBboxes?.error, offersManualSelect("error", onlyNoText));
       Registry.markIdle(originalSrc);
       // Legacy autoclose preserved behind flag (see ERROR_AUTOCLOSE above).
       if (ERROR_AUTOCLOSE) {
@@ -841,7 +857,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       // number, and an unnumbered page gives the model no region to answer for.
       const skipStage = skipRefining || autoTranslate || currentMode === "gemini";
       if (skipStage && bboxes.length > 0) {
-        await executeTranslation();
+        await executeTranslation(true);
       } else {
         mode = "refining";
         Registry.markIdle(originalSrc);
