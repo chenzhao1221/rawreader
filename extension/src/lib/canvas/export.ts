@@ -28,30 +28,38 @@ export function getElementSrc(
   return "";
 }
 
-export function imageToBase64(img: MangaTargetElement): string | null {
-  try {
-    if (img instanceof HTMLCanvasElement) {
-      const dataUrl = img.toDataURL("image/jpeg", 0.95);
-      if (!(img as any).__lmt_src || String((img as any).__lmt_src).startsWith("data:")) {
-        (img as any).__lmt_src = dataUrl;
-      }
-      return dataUrl;
+/**
+ * Draws the element on a canvas and returns a JPEG data URL. Throws with the reason when that is not possible
+ * (a cross-origin image without CORS taints the canvas and toDataURL throws a SecurityError).
+ */
+export function imageToDataUrl(img: MangaTargetElement, quality = 0.95): string {
+  if (img instanceof HTMLCanvasElement) {
+    const dataUrl = img.toDataURL("image/jpeg", quality);
+    if (!(img as any).__lmt_src || String((img as any).__lmt_src).startsWith("data:")) {
+      (img as any).__lmt_src = dataUrl;
     }
-    const width = img.naturalWidth;
-    const height = img.naturalHeight;
-    if (!width || !height) return null;
+    return dataUrl;
+  }
+  const width = img.naturalWidth;
+  const height = img.naturalHeight;
+  if (!width || !height) throw new Error("the image has no pixels yet (not loaded)");
 
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2D canvas available");
 
-    ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, width, height);
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, width, height);
 
-    return canvas.toDataURL("image/jpeg", 0.95);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+export function imageToBase64(img: MangaTargetElement, quality = 0.95): string | null {
+  try {
+    return imageToDataUrl(img, quality);
   } catch {
     return null;
   }

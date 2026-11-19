@@ -153,6 +153,7 @@ The exact factoring (extracting the post-capture part of the current per-image t
 
 - `BRIDGE_PING`: `fetch('http://127.0.0.1:<port>/ping', { headers: { Authorization } })` with a 3 s timeout; returns `{ ok, ready, reason }` to popup and options.
 - `BRIDGE_TRANSLATE`: takes `{ src, boxes?, context?, priority }` from the content script; gets bytes (data URL decode or the existing `PROXY_IMAGE` fetch); posts JSON; maps HTTP errors to `{ error: { code, message } }`; aborts on tab navigation or when the content script cancels (port disconnect).
+- Getting the image bytes (`lib/image-source.ts`, run by the content script before `BRIDGE_TRANSLATE`, both backends): (1) draw the loaded `<img>` on a canvas; (2) `fetch(url, { credentials: "include" })` from the page, so Cookies such as `cf_clearance` and the page Referer are sent; (3) `PROXY_IMAGE` in the background (Referer session rule). Each failed step is logged to the console. When all three fail the content script answers `image-unavailable` with the last step's reason and does not call the backend. Results above 8 MB are re-encoded as JPEG at the same pixel size, so box coordinates stay valid.
 - A per-tab concurrency cap (2 in flight) so one long strip page does not flood the app queue; priority = negative distance to the viewport, as in LMT's queue.
 
 ### 5.2 Content script in bridge mode

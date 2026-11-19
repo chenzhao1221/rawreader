@@ -11,6 +11,8 @@ import { getSiteRule, resolveActiveSiteRule } from "@/lib/adapters";
 import { DefaultConfig, resolveLangGroup } from "@/lib/configs";
 import { BridgeMemo } from "@/lib/bridge/memo";
 import { contextToBridge } from "@/lib/bridge/client";
+import { browserImageCodec } from "@/lib/direct/image-browser";
+import { acquireImageDataUrl } from "@/lib/image-source";
 import type { BridgeBox, BridgeTranslateReply } from "@/lib/bridge/protocol";
 import { logDebugEntry, updateDebugEntry } from "./debug";
 import {
@@ -26,7 +28,7 @@ import {
   inpaintBbox,
   type MangaTargetElement,
 } from "./utils";
-import { getElementSrc } from "@/lib/canvas";
+import { getElementSrc, imageToDataUrl } from "@/lib/canvas";
 import {
   isCleanResult,
   seriesContextFromStored,
@@ -211,25 +213,41 @@ export default defineContentScript({
       // MaxPool ceil() shape error it causes in PaddleOCR.
       // Falls back to background proxy fetch with Referer header rewriting when canvas is tainted.
       let src = originalSrc;
+      // Set when every way of getting the image failed; the bridge call below then answers image-unavailable.
+      let imageFailure: string | null = null;
       if (!originalSrc.startsWith("data:")) {
-        const dataUrl = imageToBase64(imgElement);
-        if (dataUrl) {
-          src = dataUrl;
-        } else if (imgElement instanceof HTMLCanvasElement) {
+        if (imgElement instanceof HTMLCanvasElement) {
           // No tab screenshots (ER7.8): a canvas that cannot be exported is skipped.
-          Registry.markIdle(originalSrc);
-          return;
+          const canvasUrl = imageToBase64(imgElement);
+          if (!canvasUrl) {
+            Registry.markIdle(originalSrc);
+            return;
+          }
+          src = canvasUrl;
         } else {
+          // Three steps, see lib/image-source.ts: draw the loaded <img>, fetch from the page with its cookies,
+          // then ask the background worker (Referer rule). Each failed step is logged to the console.
           try {
-            const res = await browser.runtime.sendMessage({
-              type: "PROXY_IMAGE",
-              data: { url: originalSrc, referer: window.location.href },
+            const got = await acquireImageDataUrl(originalSrc, {
+              readElement: (quality) => imageToDataUrl(imgElement, quality),
+              fetchImpl: (url, init) => fetch(url, init),
+              reencodeJpeg: async (bytes, quality) => {
+                const { width, height } = await browserImageCodec.measure(bytes);
+                return browserImageCodec.encodeJpeg(bytes, width, height, quality);
+              },
+              background: async (url) => {
+                const res = await browser.runtime.sendMessage({
+                  type: "PROXY_IMAGE",
+                  data: { url, referer: window.location.href },
+                });
+                if (res?.dataUrl) return res.dataUrl as string;
+                throw new Error(typeof res?.error === "string" && res.error ? res.error : "no answer from the background worker");
+              },
+              log: (step, reason) => console.warn(`RawReader: image step "${step}" failed: ${reason}`),
             });
-            if (res?.dataUrl) {
-              src = res.dataUrl;
-            }
+            src = got.dataUrl;
           } catch (err) {
-            console.warn("LMT: Background image proxy failed:", err);
+            imageFailure = err instanceof Error ? err.message : String(err);
           }
         }
       }
@@ -249,6 +267,8 @@ export default defineContentScript({
           return -Math.abs(r.top + r.height / 2 - window.innerHeight / 2);
         };
         const bridgeMemo = new BridgeMemo(async (boxes?: BridgeBox[]) => {
+          // Every way of getting the image failed: no point asking the backend; report the last step's reason.
+          if (imageFailure !== null) return { error: { code: "image-unavailable", message: imageFailure } };
           const reply = (await browser.runtime.sendMessage({
             type: "BRIDGE_TRANSLATE",
             data: {
