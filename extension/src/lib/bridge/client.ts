@@ -87,6 +87,10 @@ export function describeBridgeError(failure: BridgeFailure): string {
       return "请先打开 RawReader。";
     case "timeout":
       return "RawReader 没有及时回应。";
+    case "image-unavailable":
+      return `图片下载失败：${failure.message || "未知原因"}`;
+    case "internal-error":
+      return `插件内部错误：${failure.message || "未知原因"}（详情见扩展的 service worker 控制台）`;
     default:
       return `RawReader 返回了错误（${failure.code}）。`;
   }

@@ -74,6 +74,13 @@ describe("describeBridgeError", () => {
     expect(describeBridgeError({ code: "unreachable", message: "" })).toBe("请先打开 RawReader。");
     expect(describeBridgeError({ code: "weird", message: "" })).toContain("weird");
   });
+
+  it("names the download failure and never blames RawReader for it", () => {
+    const text = describeBridgeError({ code: "image-unavailable", message: "HTTP 403 Forbidden" });
+    expect(text).toBe("图片下载失败：HTTP 403 Forbidden");
+    expect(text).not.toContain("RawReader");
+    expect(describeBridgeError({ code: "internal-error", message: "boom" })).toContain("boom");
+  });
 });
 
 const PING_BODY = { v: 1, app: "App", version: "1.2.3", ready: true, engine: "local" };

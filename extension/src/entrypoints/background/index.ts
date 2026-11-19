@@ -20,6 +20,7 @@ import { isDirectConfigured, originPatternFor } from "@/lib/direct/providers";
 import { selectBackend, type BackendKind } from "@/lib/direct/select";
 import type { BackendStatusReply } from "@/lib/direct/status";
 import { loadBackendSettings } from "@/lib/direct/settings";
+import { ImageDownloadError, proxyFetch, type ProxyFetchDeps, type SessionRuleApi } from "@/lib/image-proxy";
 import { BRIDGE_TRANSLATE_TIMEOUT_MS, INPAINT_TIMEOUT_MS, MAX_BRIDGE_REQUESTS_PER_TAB } from "@/lib/timeouts";
 import { createAsyncResponder, keepAliveWhile, withTimeout } from "./messaging";
 import { ensureOffscreen } from "./utils";
@@ -69,41 +70,18 @@ export default defineBackground(() => {
     return found;
   }
 
-  // Fetches an image the way LMT does: through declarativeNetRequest so CDNs that check the Referer accept the request.
-  async function proxyFetch(url: string, referer: string | undefined): Promise<ArrayBuffer> {
-    const ruleId = 99999;
-    const dnr = (browser as any).declarativeNetRequest;
-    if (dnr?.updateSessionRules && referer) {
-      try {
-        await dnr.updateSessionRules({
-          removeRuleIds: [ruleId],
-          addRules: [
-            {
-              id: ruleId,
-              priority: 1,
-              action: { type: "modifyHeaders", requestHeaders: [{ header: "Referer", operation: "set", value: referer }] },
-              condition: { urlFilter: url.replace(/[?#].*$/, ""), resourceTypes: ["xmlhttprequest", "other", "image"] },
-            },
-          ],
-        });
-      } catch (e) {
-        console.warn("RawReader: Failed to set DNR rule for proxy fetch:", e);
-      }
-    }
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Proxy fetch failed with status ${res.status}: ${res.statusText}`);
-      return await res.arrayBuffer();
-    } finally {
-      if (dnr?.updateSessionRules && referer) await dnr.updateSessionRules({ removeRuleIds: [ruleId] }).catch(() => {});
-    }
-  }
+  const proxyDeps = (): ProxyFetchDeps => ({ dnr: (browser as any).declarativeNetRequest as Partial<SessionRuleApi> | undefined });
 
+  /** Downloads the source image. Every failure here is an ImageDownloadError, so the caller can tell it apart. */
   async function imageBytes(src: string, referer: string | undefined): Promise<Uint8Array> {
     const inline = dataUrlToBytes(src);
     if (inline) return inline;
-    if (!isAllowedImageUrl(src, referer)) throw new Error("安全拦截：图片地址不被允许或不安全");
-    return new Uint8Array(await proxyFetch(src, referer));
+    try {
+      if (!isAllowedImageUrl(src, referer)) throw new Error("安全拦截：图片地址不被允许或不安全");
+      return new Uint8Array(await proxyFetch(src, referer, proxyDeps()));
+    } catch (error) {
+      throw new ImageDownloadError(error);
+    }
   }
 
   // Opens the options page so the user can pick a backend. At most once per 10 minutes, so auto-translate on a
@@ -162,7 +140,12 @@ export default defineBackground(() => {
       return await translateViaBridge({ port: probe.port }, { bytes, boxes, context, priority, signal: controller.signal, timeoutMs: BRIDGE_TRANSLATE_TIMEOUT_MS });
     } catch (error) {
       if ((error as { name?: string })?.name === "AbortError") return { error: { code: "timeout", message: "Cancelled" } };
-      return { error: { code: "image-unavailable", message: (error as Error).message ?? String(error) } };
+      if (error instanceof ImageDownloadError) {
+        console.error("RawReader: image download failed:", error.message);
+        return { error: { code: "image-unavailable", message: error.message } };
+      }
+      console.error("RawReader: bridge translate failed:", error);
+      return { error: { code: "internal-error", message: (error as Error)?.message ?? String(error) } };
     } finally {
       release?.();
       controllers.get(key)?.delete(controller);
@@ -226,7 +209,7 @@ export default defineBackground(() => {
         return true;
       }
       keepAliveWhile(
-        proxyFetch(url, referer)
+        proxyFetch(url, referer, proxyDeps())
           .then((buf) => ({ dataUrl: arrayBufferToBase64DataUrl(buf) }))
           .then(respond)
           .catch(respondErr),
