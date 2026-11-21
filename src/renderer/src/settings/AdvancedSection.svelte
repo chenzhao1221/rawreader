@@ -5,6 +5,7 @@
   import Row from '../ui/Row.svelte'
   import Segmented from '../ui/Segmented.svelte'
   import Toggle from '../ui/Toggle.svelte'
+  import { CONCURRENCY_OPTIONS, concurrencyOptionValue, concurrencySelectValue, parseConcurrencyInput } from './concurrency'
 
   const config = $derived(store.config)
   let error = $state<string | null>(null)
@@ -18,7 +19,6 @@
   type Ahead = keyof typeof AHEAD
   const aheadFrom = (px: number): Ahead => (px < 500 ? 'off' : px < 3000 ? 'near' : 'far')
 
-  const concurrency = [null, 1, 2, 3, 4, 6, 8] as const
   let confirmClear = $state(false)
 </script>
 
@@ -77,19 +77,19 @@
     <Row label={t.advanced.ocrConcurrency}>
       <select
         class="ui-select"
-        value={config.pipeline.ocrConcurrency}
-        onchange={(e) => save({ pipeline: { ocrConcurrency: e.currentTarget.value === '' ? null : Number(e.currentTarget.value) } })}
+        value={concurrencySelectValue(config.pipeline.ocrConcurrency)}
+        onchange={(e) => save({ pipeline: { ocrConcurrency: parseConcurrencyInput(e.currentTarget.value) } })}
       >
-        {#each concurrency as option (option)}<option value={option ?? ''}>{option ?? t.advanced.auto}</option>{/each}
+        {#each CONCURRENCY_OPTIONS as option (option)}<option value={concurrencyOptionValue(option)}>{option ?? t.advanced.auto}</option>{/each}
       </select>
     </Row>
     <Row label={t.advanced.translateConcurrency}>
       <select
         class="ui-select"
-        value={config.pipeline.translateConcurrency}
-        onchange={(e) => save({ pipeline: { translateConcurrency: e.currentTarget.value === '' ? null : Number(e.currentTarget.value) } })}
+        value={concurrencySelectValue(config.pipeline.translateConcurrency)}
+        onchange={(e) => save({ pipeline: { translateConcurrency: parseConcurrencyInput(e.currentTarget.value) } })}
       >
-        {#each concurrency as option (option)}<option value={option ?? ''}>{option ?? t.advanced.auto}</option>{/each}
+        {#each CONCURRENCY_OPTIONS as option (option)}<option value={concurrencyOptionValue(option)}>{option ?? t.advanced.auto}</option>{/each}
       </select>
     </Row>
   </Group>
