@@ -1,5 +1,5 @@
 import { WebContentsView } from 'electron'
-import type { BrowserWindow, HandlerDetails, WindowOpenHandlerResponse } from 'electron'
+import type { BrowserWindow, ContextMenuParams, HandlerDetails, WindowOpenHandlerResponse } from 'electron'
 import { BROWSE_PARTITION, TOP_CHROME_HEIGHT } from '../../shared/constants'
 import type { BrowseState, ShellNotice } from '../../shared/ipc/contract'
 import { createLogger } from '../log/log'
@@ -26,6 +26,8 @@ export interface BrowseViewOptions {
   /** Decides what a `window.open` / target=_blank does (new tab, popup window, or nothing). */
   onWindowOpen: (details: HandlerDetails) => WindowOpenHandlerResponse
   onShortcut: (shortcut: TabShortcut) => void
+  /** Right-click inside the page. */
+  onContextMenu: (params: ContextMenuParams) => void
   /** Extra height above the page (the translate bar), in CSS pixels. */
   getExtraTop: () => number
 }
@@ -95,6 +97,8 @@ export function createBrowseView(options: BrowseViewOptions): BrowseView {
   wc.on('will-redirect', guard)
   wc.on('will-attach-webview', (event) => event.preventDefault())
   wc.setWindowOpenHandler((details) => options.onWindowOpen(details))
+
+  wc.on('context-menu', (_event, params) => options.onContextMenu(params))
 
   wc.on('before-input-event', (event, input) => {
     const shortcut = shortcutFor(input)

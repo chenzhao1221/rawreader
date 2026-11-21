@@ -111,7 +111,7 @@ export const SecretsStatusSchema = z.object({ openai: z.boolean(), gemini: z.boo
 export type SecretsStatus = z.infer<typeof SecretsStatusSchema>
 
 export const ShellNoticeSchema = z.object({
-  code: z.enum(['DOWNLOAD_CANCELLED', 'NAVIGATION_BLOCKED', 'LOAD_FAILED']),
+  code: z.enum(['DOWNLOAD_CANCELLED', 'NAVIGATION_BLOCKED', 'LOAD_FAILED', 'TRANSLATE_IMAGE_FAILED']),
 })
 export type ShellNotice = z.infer<typeof ShellNoticeSchema>
 
@@ -154,6 +154,23 @@ export const PageImagesBatchSchema = z.object({
   images: z.array(PageImageSchema).min(1).max(200),
 })
 export type PageImagesBatch = z.infer<typeof PageImagesBatchSchema>
+
+/** Right-click "translate this image": main asks the page which image lies at the click (view coordinates, CSS px). */
+export const PageTranslateRequestSchema = z.object({
+  x: z.number().int().min(0).max(1_000_000),
+  y: z.number().int().min(0).max(1_000_000),
+  /** `params.srcURL` of the menu click; the page falls back to matching it against its images. */
+  srcUrl: z.string().max(8192),
+})
+export type PageTranslateRequest = z.infer<typeof PageTranslateRequestSchema>
+
+/** The page answers with the one image it found, in the same shape as an auto-translate report. */
+export const PageTranslateImageSchema = z.object({
+  docId: z.string().min(8).max(64),
+  pageUrl: z.string().max(8192),
+  image: PageImageSchema,
+})
+export type PageTranslateImage = z.infer<typeof PageTranslateImageSchema>
 
 /** Per-page progress shown in the shell (R5.7). */
 export const PipelineProgressSchema = z.object({
@@ -351,6 +368,7 @@ export const ipc = {
   'app:open-logs': def(z.void(), z.void()),
   'page:hello': def(PageHelloSchema, PageConfigSchema, ['browse']),
   'page:images': def(PageImagesBatchSchema, z.void(), ['browse']),
+  'page:translate-image': def(PageTranslateImageSchema, z.void(), ['browse']),
   'models:overview': def(z.void(), ModelsOverviewSchema),
   'models:download': def(
     z.object({ action: z.enum(['start', 'pause', 'resume', 'cancel']), role: ModelRoleSchema.optional() }),
@@ -381,6 +399,7 @@ export const events = {
   'llama:status': ServerStatusSchema,
   'shell:notice': ShellNoticeSchema,
   'page:config': PageConfigSchema,
+  'page:translate-request': PageTranslateRequestSchema,
   'pipeline:progress': PipelineProgressSchema,
   'overlay:result': OverlayResultSchema,
   'models:changed': ModelsOverviewSchema,

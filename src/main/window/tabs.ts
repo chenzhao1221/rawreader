@@ -4,6 +4,7 @@ import type { BrowseState, ShellNotice, TabsState } from '../../shared/ipc/contr
 import { createLogger } from '../log/log'
 import { isHttpUrl } from './address'
 import { createBrowseView } from './browse-view'
+import { showBrowseMenu } from './browse-menu'
 import type { BrowseAction, BrowseView } from './browse-view'
 import { cycle, insertIndex, nextAfterClose } from './tab-order'
 import type { TabShortcut } from './tab-order'
@@ -37,6 +38,10 @@ export interface TabManagerOptions {
   isQuitting: () => boolean
   /** Extra height above the page (the translate bar). */
   getExtraTop: () => number
+  /** Development build: the page menu offers Inspect. */
+  isDev: boolean
+  /** Right-click "translate this image": the page of `view` should translate the image at (x, y). */
+  onTranslateImage: (view: BrowseView, request: { x: number; y: number; srcUrl: string }) => void
 }
 
 export interface TabManager {
@@ -166,6 +171,12 @@ export function createTabManager(options: TabManagerOptions): TabManager {
       onNavigated: () => pushTabs(),
       onWindowOpen: handleWindowOpen,
       onShortcut: (s) => manager.shortcut(s),
+      onContextMenu: (params) =>
+        showBrowseMenu(win, view.webContents, params, {
+          isDev: options.isDev,
+          openInNewTab: (url) => open(url, true),
+          translateImage: (request) => options.onTranslateImage(view, request),
+        }),
       getExtraTop: options.getExtraTop,
     })
     id = view.webContentsId

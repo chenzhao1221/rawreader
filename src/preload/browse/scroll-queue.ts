@@ -313,6 +313,26 @@ export class ScrollQueue {
     return id
   }
 
+  /**
+   * Describes one image for a manual request (right-click "translate this image"), tagging the element so the
+   * overlay can find it. It does not touch the enqueue bookkeeping, so the scan and the manual request never
+   * block each other. `urlOverride` is the URL the browser reported for the click, used when it differs from what
+   * the scan would pick (a lazy-load placeholder in `src`). Null when the URL cannot be reported.
+   */
+  describeImage(img: HTMLImageElement, urlOverride?: string): PageImage | null {
+    const url = urlOverride ?? this.urlOf(img)
+    if (!url || !isReportableUrl(url)) return null
+    const order = Array.prototype.indexOf.call(this.doc.images, img) as number
+    return {
+      elId: this.elementId(img),
+      url,
+      naturalW: img.naturalWidth,
+      naturalH: img.naturalHeight,
+      distance: 0,
+      ...(order >= 0 ? { order } : {}),
+    }
+  }
+
   private enqueue(img: HTMLImageElement, distance: number): void {
     const url = this.urlOf(img)
     if (!url || !isReportableUrl(url)) return

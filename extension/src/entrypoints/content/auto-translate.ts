@@ -208,6 +208,35 @@ export class AutoTranslateOrchestrator {
     }
   }
 
+  /**
+   * Right-click "translate this page's images": queues every loaded, qualifying image on the page once, nearest to
+   * the top of the viewport first. Works with auto-translate off. Returns how many images were offered to the queue.
+   */
+  async enqueueAllQualifying(): Promise<number> {
+    if (!this.translateFn) return 0;
+    this.activeRule ??= await resolveActiveSiteRule();
+    const found: MangaTargetElement[] = [];
+    if (this.activeRule?.imageSelector) {
+      try {
+        const root = this.activeRule.containerSelector
+          ? document.querySelector(this.activeRule.containerSelector) ?? document
+          : document;
+        found.push(...root.querySelectorAll<MangaTargetElement>(this.activeRule.imageSelector));
+      } catch {
+        // Selector syntax error: fall back to the generic scan.
+      }
+    }
+    if (found.length === 0) found.push(...document.querySelectorAll<MangaTargetElement>("img, canvas"));
+
+    const ready = found.filter((img) =>
+      (img instanceof HTMLCanvasElement ? img.width > 0 && img.height > 0 : img.complete && img.naturalWidth > 0) &&
+      this.isQualifyingImage(img),
+    );
+    ready.sort((a, b) => Math.abs(a.getBoundingClientRect().top) - Math.abs(b.getBoundingClientRect().top));
+    for (const img of ready) this.enqueueManual(img);
+    return ready.length;
+  }
+
   /** Unified cap: slider 1..10 when auto ON, absolute 3 when OFF. */
   private async applyCap() {
     const [enabled, slider] = await Promise.all([

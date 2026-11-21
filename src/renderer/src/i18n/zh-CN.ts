@@ -301,6 +301,7 @@ const noticeLabels: Record<ShellNotice['code'], string> = {
   DOWNLOAD_CANCELLED: '已取消文件下载（当前版本不支持下载）。',
   NAVIGATION_BLOCKED: '已阻止打开非 http(s) 链接。',
   LOAD_FAILED: '页面加载失败。',
+  TRANSLATE_IMAGE_FAILED: '这张图片翻译失败，详情见日志。',
 }
 
 /** Names of the languages most pages use. Others show as "外语". */

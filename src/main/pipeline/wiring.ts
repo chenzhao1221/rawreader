@@ -1,7 +1,16 @@
 import { utilityProcess } from 'electron'
 import type { Session, WebContents } from 'electron'
 import type { Config } from '../../shared/config/schema'
-import type { OverlayResult, PageConfig, PageImagesBatch, PipelineProgress, ServerRole, ServerStatus } from '../../shared/ipc/contract'
+import type {
+  OverlayResult,
+  PageConfig,
+  PageImagesBatch,
+  PageTranslateImage,
+  PageTranslateRequest,
+  PipelineProgress,
+  ServerRole,
+  ServerStatus,
+} from '../../shared/ipc/contract'
 import { attachCdpCapture } from '../capture/cdp'
 import type { CdpCapture } from '../capture/cdp'
 import { captureImage } from '../capture/capture'
@@ -50,6 +59,13 @@ export interface PipelineWiring {
   setActiveTab(wc: WebContents | null): void
   pageHello(hello: { docId: string; url: string }, senderId: number): PageConfig
   pageImages(batch: PageImagesBatch, senderId: number): void
+  /** Right-click: asks the page of tab `wc` which image lies at the click. The page answers through `translateImage`. */
+  requestImageTranslation(wc: WebContents, request: PageTranslateRequest): void
+  /**
+   * Translates one image the user picked (right-click menu), whatever the auto-translate switch says, and sends the
+   * result to its element. Resolves false when the image could not be translated.
+   */
+  translateImage(request: PageTranslateImage, senderId: number): Promise<boolean>
   /** Forget in-memory results after the persistent cache was cleared. */
   clearResults(): void
   onConfigChanged(next: Config): void
@@ -110,7 +126,11 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
   const tabs = new Map<number, TabEntry>()
   let activeId: number | null = null
 
-  const send = (wc: WebContents, channel: 'page:config' | 'overlay:result', payload: PageConfig | OverlayResult): void => {
+  const send = (
+    wc: WebContents,
+    channel: 'page:config' | 'overlay:result' | 'page:translate-request',
+    payload: PageConfig | OverlayResult | PageTranslateRequest,
+  ): void => {
     if (!wc.isDestroyed()) wc.send(channel, payload)
   }
   /** Inactive tabs keep their overlays (and the visibility toggle) but do not scan. */
@@ -209,6 +229,33 @@ export function createPipelineWiring(options: PipelineWiringOptions): PipelineWi
     },
     pageImages(batch, senderId) {
       if (senderId === activeId) pipeline.submit(batch)
+    },
+    requestImageTranslation(wc, request) {
+      if (tabs.has(wc.id)) send(wc, 'page:translate-request', request)
+    },
+    async translateImage({ docId, pageUrl, image }, senderId) {
+      const entry = tabs.get(senderId)
+      // A page that has navigated since the click is not the page the user asked about.
+      if (!entry || entry.doc?.docId !== docId) return false
+      try {
+        const captured = await captureImage(
+          { getLoadedBytes: (url) => entry.cdp.getBody(url), fetchBytes },
+          { url: image.url, pageUrl, maxBytes: pipelineSettingsFrom(options.getConfig()).maxImageBytes },
+        )
+        if (!captured.ok) {
+          logger.warn(`manual image ${image.elId} failed: ${captured.code}: ${captured.detail ?? ''}`)
+          return false
+        }
+        // Same stage queues, settings and cache as the page scan, and ahead of it. The auto-translate switch does not gate this call.
+        const result = await pipeline.translateBytes(captured.image.bytes, { priority: 1_000_000 })
+        if (entry.doc?.docId !== docId) return false
+        send(entry.wc, 'overlay:result', toOverlayPayload({ docId, elId: image.elId }, result))
+        return true
+      } catch (error) {
+        const code = (error as { code?: unknown } | null)?.code
+        logger.warn(`manual image ${image.elId} failed: ${typeof code === 'string' ? code : 'INTERNAL'}: ${error instanceof Error ? error.message : String(error)}`)
+        return false
+      }
     },
     clearResults() {
       pipeline.clearResults()

@@ -274,6 +274,8 @@ async function bootstrap(): Promise<void> {
     isPanelOpen: () => panelOpen,
     isQuitting: () => quitting,
     getExtraTop: () => (barShown ? INFOBAR_HEIGHT : 0),
+    isDev: !app.isPackaged,
+    onTranslateImage: (view, request) => pipelineWiring.requestImageTranslation(view.webContents, request),
   })
   tabs = tabManager
   win.webContents.on('before-input-event', (event, input) => {
@@ -349,6 +351,11 @@ async function bootstrap(): Promise<void> {
     controlLlama: (role, action) => llama.control(role, action),
     pageHello: (hello, senderId) => pipelineWiring.pageHello(hello, senderId),
     pageImages: (batch, senderId) => pipelineWiring.pageImages(batch, senderId),
+    pageTranslateImage: (request, senderId) => {
+      void pipelineWiring.translateImage(request, senderId).then((ok) => {
+        if (!ok) sendToShell('shell:notice', { code: 'TRANSLATE_IMAGE_FAILED' })
+      })
+    },
     webTextPage: (page, senderId) => {
       void webText.pageReady(senderId, page)
     },

@@ -13,6 +13,7 @@ import { PriorityGate } from "@/lib/bridge/gate";
 import { installBridgeOriginRule } from "@/lib/bridge/origin";
 import type { BridgePingReply, BridgeTranslateMessage, BridgeTranslateReply } from "@/lib/bridge/protocol";
 import { DefaultConfig } from "@/lib/configs";
+import { CONTEXT_MENU_ITEMS, messageForMenuClick } from "@/lib/context-menu";
 import { translateDirect } from "@/lib/direct/client";
 import { NO_BACKEND_CODE } from "@/lib/direct/errors";
 import { browserImageCodec } from "@/lib/direct/image-browser";
@@ -155,6 +156,26 @@ export default defineBackground(() => {
   // Nothing to set up: look for the app at browser start and after an install or update, so the port is cached.
   browser.runtime.onStartup.addListener(() => void findBridge());
   browser.runtime.onInstalled.addListener(() => void findBridge());
+
+  // ── Right-click menu: manual fallback for images that auto-detection missed ──
+  // Menu items persist across worker restarts, so they are (re)created only on install or update.
+  browser.runtime.onInstalled.addListener(() => {
+    browser.contextMenus.removeAll(() => {
+      for (const item of CONTEXT_MENU_ITEMS) {
+        browser.contextMenus.create({ id: item.id, title: item.title, contexts: item.contexts }, () => {
+          void browser.runtime.lastError; // Read the error so a duplicate id does not log "Unchecked runtime.lastError".
+        });
+      }
+    });
+  });
+  // The click is handled by the page's content script, which finds the <img> and runs the normal pipeline.
+  browser.contextMenus.onClicked.addListener((info, tab) => {
+    const message = messageForMenuClick(info);
+    if (!message || tab?.id === undefined) return;
+    browser.tabs.sendMessage(tab.id, message, info.frameId !== undefined ? { frameId: info.frameId } : undefined).catch((error) => {
+      console.warn("RawReader: the page did not take the menu command:", (error as Error)?.message ?? error);
+    });
+  });
 
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const respond = createAsyncResponder(sendResponse);

@@ -11,6 +11,7 @@ import type {
   NavResult,
   PageConfig,
   PageImagesBatch,
+  PageTranslateImage,
   ServerRole,
   ServerStatus,
   TabsState,
@@ -39,6 +40,8 @@ export interface HandlerDeps {
   pageHello(hello: { docId: string; url: string }, senderId: number): PageConfig
   /** Browse preload reported images near the viewport. */
   pageImages(batch: PageImagesBatch, senderId: number): void
+  /** Browse preload found the image the user right-clicked and wants it translated now. */
+  pageTranslateImage(request: PageTranslateImage, senderId: number): void
   getTabs(): TabsState
   /** Opens a new tab with the given URL, or an empty one. */
   newTab(url: string | null): void
@@ -137,6 +140,9 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
   registrar.handle('page:hello', (hello, event) => deps.pageHello(hello, event.sender.id))
   registrar.handle('page:images', (batch, event) => {
     deps.pageImages(batch, event.sender.id)
+  })
+  registrar.handle('page:translate-image', (request, event) => {
+    deps.pageTranslateImage(request, event.sender.id)
   })
   registrar.handle('overlay:font', () => deps.getOverlayFont())
   registrar.handle('cache:stats', () => deps.getCacheStats())

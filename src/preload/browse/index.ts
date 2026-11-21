@@ -6,6 +6,7 @@ import { ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { IpcResult, PageConfig, PageImage } from '../../shared/ipc/contract'
 import { OverlayManager, isOverlayResult } from './overlay'
+import { imageMatchesUrl, normalizeUrl, pickContextImage } from './context-image'
 import { ScrollQueue } from './scroll-queue'
 import { WebTextTranslator, sampleText } from './webtext'
 
@@ -58,6 +59,20 @@ ipcRenderer.on('page:config', (_event: IpcRendererEvent, config: PageConfig) => 
 // A finished image from the pipeline. Results for another document are ignored.
 ipcRenderer.on('overlay:result', (_event: IpcRendererEvent, payload: unknown) => {
   if (isOverlayResult(payload) && payload.docId === docId) void overlay.show(payload)
+})
+
+// Right-click "translate this image": main sends the click position and the URL the browser reported.
+// Find that image, tag it and ask main to translate it now (whatever the auto-translate switch says).
+ipcRenderer.on('page:translate-request', (_event: IpcRendererEvent, request: unknown) => {
+  const { x, y, srcUrl } = (request ?? {}) as { x?: unknown; y?: unknown; srcUrl?: unknown }
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof srcUrl !== 'string') return
+  const atPoint = document.elementsFromPoint(x, y).filter((el): el is HTMLImageElement => el instanceof HTMLImageElement)
+  const img = pickContextImage(atPoint, document.images, srcUrl, document.baseURI)
+  if (!img) return
+  const matched = imageMatchesUrl(img, srcUrl, document.baseURI) ? normalizeUrl(srcUrl, document.baseURI) : null
+  const image = queue.describeImage(img, matched ?? undefined)
+  if (!image) return
+  void ipcRenderer.invoke('page:translate-image', { docId, pageUrl: location.href, image }).catch(() => {})
 })
 
 /** Only top-level documents are scanned; sandboxed iframes get no preload anyway. */

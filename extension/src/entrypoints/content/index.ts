@@ -13,6 +13,8 @@ import { BridgeMemo } from "@/lib/bridge/memo";
 import { contextToBridge } from "@/lib/bridge/client";
 import { browserImageCodec } from "@/lib/direct/image-browser";
 import { acquireImageDataUrl } from "@/lib/image-source";
+import { findImageForSrcUrl } from "@/lib/image-match";
+import { MSG_CONTEXT_TRANSLATE_PAGE, isContextTranslateMessage } from "@/lib/context-menu";
 import type { BridgeBox, BridgeTranslateReply } from "@/lib/bridge/protocol";
 import { logDebugEntry, updateDebugEntry } from "./debug";
 import {
@@ -889,7 +891,34 @@ export default defineContentScript({
       ui.mount();
     });
 
+    // Remember what the user right-clicked: when two images share a URL, the menu command targets this one.
+    let lastContextTarget: Element | null = null;
+    document.addEventListener(
+      "contextmenu",
+      (event) => {
+        lastContextTarget = event.target instanceof Element ? event.target : null;
+      },
+      true,
+    );
+
     browser.runtime.onMessage.addListener(async (msg, _, sendResponse) => {
+      // Right-click menu (manual fallback when auto-detection missed an image).
+      if (isContextTranslateMessage(msg)) {
+        if (msg.type === MSG_CONTEXT_TRANSLATE_PAGE) {
+          const count = await autoTranslator.enqueueAllQualifying();
+          if (count === 0) console.warn("RawReader: no loaded images found on this page to translate");
+          return;
+        }
+        const clicked = lastContextTarget?.closest("img") ?? null;
+        const images = document.querySelectorAll<HTMLImageElement>("img");
+        const target = findImageForSrcUrl(images, msg.data.srcUrl, window.location.href, clicked);
+        if (!target) {
+          console.warn("RawReader: could not find the image for the right-clicked URL on this page");
+          return;
+        }
+        autoTranslator.enqueueManual(target);
+        return;
+      }
       // Test Regex from popup settings to show live result
       if (msg.type === "TEST_REGEX_RULE") {
         getSiteRule([msg.data.rule]).then((result) =>
