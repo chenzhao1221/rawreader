@@ -6,6 +6,7 @@ import TaskStatusBar from "@/lib/components/TaskStatusBar.svelte";
 import { AutoTranslateOrchestrator } from "./auto-translate";
 import * as Registry from "./translation-registry";
 import { joinSharedCall } from "./translation-registry";
+import { taskPriority } from "@/lib/bridge/gate";
 import { mount, unmount } from "svelte";
 import { ShadowRootContentScriptUi, storage } from "#imports";
 import { getSiteRule } from "@/lib/adapters";
@@ -380,10 +381,20 @@ export default defineContentScript({
             seriesContextFromStored(values[syncContextKey(seriesName)], values[localHistoryKey(seriesName)], seriesName),
           );
         };
-        // Images nearest the middle of the viewport go first (larger is more urgent).
-        const viewportPriority = () => {
+        // How urgent this task is when it goes to the background worker (larger is more urgent): a menu click first,
+        // then a picture on screen (the more of the screen it covers, the earlier), then the ones off screen by distance.
+        // Worked out when the request is sent. A retry is a click too.
+        const currentPriority = (retry: boolean) => {
           const r = imgElement.getBoundingClientRect();
-          return -Math.abs(r.top + r.height / 2 - window.innerHeight / 2);
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          const overlapX = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
+          const overlapY = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+          return taskPriority({
+            manual: retry || task.origin === "manual",
+            viewportCoverage: vw > 0 && vh > 0 ? (overlapX * overlapY) / (vw * vh) : 0,
+            distancePx: r.bottom < 0 ? -r.bottom : r.top > vh ? r.top - vh : 0,
+          });
         };
         // Where the reader is looking, as fractions of the picture: the click (for a menu task) and the part on screen.
         const computeFocus = (): BridgeFocus | undefined => {
@@ -424,7 +435,7 @@ export default defineContentScript({
             referer: window.location.href,
             boxes,
             context: await loadBridgeContext(),
-            priority: viewportPriority(),
+            priority: currentPriority(hooks?.onlySegments !== undefined),
             focus: computeFocus(),
             onlySegments: hooks?.onlySegments,
           };

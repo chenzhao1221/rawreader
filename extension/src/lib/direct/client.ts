@@ -86,6 +86,30 @@ export interface DirectTranslateParams extends DirectDeps {
   onSegmentFailed?: ((info: { index: number; total: number; error: DirectFailure }) => void) | undefined;
   /** Long strips: how many segments will be requested, and how many are finished. */
   onProgress?: ((done: number, total: number) => void) | undefined;
+  /**
+   * Waits for permission to send one request and resolves with the function that gives the place back. Asked once per
+   * segment, so a task that is waiting behind a long strip only waits for one segment, not for the whole strip.
+   * Rejects when the task is cancelled while it waits.
+   */
+  acquireSlot?: ((segment: number) => Promise<() => void>) | undefined;
+}
+
+const CANCELLED: BridgeTranslateReply = { error: { code: "timeout", message: "Cancelled" } };
+
+/** Runs `work` while holding a request slot (when the caller gave a way to get one). Resolves null when cancelled while waiting. */
+async function withSlot<T>(params: DirectTranslateParams, segment: number, work: () => Promise<T>): Promise<T | null> {
+  if (!params.acquireSlot) return work();
+  let release: () => void;
+  try {
+    release = await params.acquireSlot(segment);
+  } catch {
+    return null;
+  }
+  try {
+    return await work();
+  } finally {
+    release();
+  }
 }
 
 /** The model's answer text, and whether the service cut it short. */
@@ -264,7 +288,9 @@ async function translateWhole(
     context: params.context,
     regions,
   });
-  const answer = await callApi(settings, prompt, { mime: prepared.mime, base64: bytesToBase64(prepared.bytes) }, params);
+  const sent = await withSlot(params, 0, () => callApi(settings, prompt, { mime: prepared.mime, base64: bytesToBase64(prepared.bytes) }, params));
+  if (sent === null) return CANCELLED;
+  const answer = sent;
   if ("error" in answer) return { error: answer.error };
 
   const parseStart = performance.now();
@@ -327,16 +353,7 @@ async function translateStrip(
   params.onProgress?.(0, work.length);
 
   for (const { segment, owned } of work) {
-    if (params.signal?.aborted) return { error: { code: "timeout", message: "Cancelled" } };
-    let segBytes: Uint8Array;
-    const encodeStart = performance.now();
-    try {
-      segBytes = await cropSegment(image, segment, w);
-    } catch (error) {
-      return { error: imageFailure(error, settings) };
-    }
-    params.trace?.encode?.(segment.index, performance.now() - encodeStart);
-
+    if (params.signal?.aborted) return CANCELLED;
     const segRegions = owned?.map((r) => wholeBoxToSegment(r.box, segment, h));
     const prompt = buildPrompt({
       targetLang: params.targetLang,
@@ -345,11 +362,27 @@ async function translateStrip(
       context: params.context,
       regions: segRegions,
     });
-    const picture = { mime: "image/jpeg", base64: bytesToBase64(segBytes) };
 
-    // A failed segment is retried once. A cancelled request is not retried.
-    let answer = await callApi(settings, prompt, picture, params, { segment: segment.index, attempt: 1 });
-    if ("error" in answer && !params.signal?.aborted) answer = await callApi(settings, prompt, picture, params, { segment: segment.index, attempt: 2 });
+    // One slot per segment: crop, encode and send (with its one retry) while holding it, then give it back so a
+    // waiting task of a higher priority can go next.
+    const outcome = await withSlot(params, segment.index, async (): Promise<{ answer: Answer | { error: DirectFailure } } | { reply: BridgeTranslateReply }> => {
+      let segBytes: Uint8Array;
+      const encodeStart = performance.now();
+      try {
+        segBytes = await cropSegment(image, segment, w);
+      } catch (error) {
+        return { reply: { error: imageFailure(error, settings) } };
+      }
+      params.trace?.encode?.(segment.index, performance.now() - encodeStart);
+      const picture = { mime: "image/jpeg", base64: bytesToBase64(segBytes) };
+      // A failed segment is retried once. A cancelled request is not retried.
+      let result = await callApi(settings, prompt, picture, params, { segment: segment.index, attempt: 1 });
+      if ("error" in result && !params.signal?.aborted) result = await callApi(settings, prompt, picture, params, { segment: segment.index, attempt: 2 });
+      return { answer: result };
+    });
+    if (outcome === null) return CANCELLED;
+    if ("reply" in outcome) return outcome.reply;
+    const answer = outcome.answer;
     if ("error" in answer) {
       if (FATAL_CODES.has(answer.error.code)) return { error: answer.error };
       const failure = failureOf(segment.index, answer.error);

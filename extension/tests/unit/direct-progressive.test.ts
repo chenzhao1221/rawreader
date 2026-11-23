@@ -4,6 +4,7 @@ import { translateDirect } from "@/lib/direct/client";
 import { codecFrom } from "./helpers/codec";
 import type { DirectApiSettings } from "@/lib/direct/providers";
 import { mergeIncremental, orderSegments, planSegments } from "@/lib/direct/tiles";
+import { PriorityGate, taskPriority } from "@/lib/bridge/gate";
 
 const settings: DirectApiSettings = {
   provider: "zhipu",
@@ -193,5 +194,82 @@ describe("mergeIncremental", () => {
   it("never merges units of one segment", () => {
     const { accepted } = mergeIncremental([], [u(1, 0.7, 0.8), u(1, 0.71, 0.81)]);
     expect(accepted).toHaveLength(2);
+  });
+});
+
+describe("a request slot is taken per segment, so a manual task goes next", () => {
+  const AUTO = taskPriority({ manual: false, viewportCoverage: 0, distancePx: 2000 });
+  const MANUAL = taskPriority({ manual: true, viewportCoverage: 0, distancePx: 0 });
+
+  it("hands the slot that frees up between two segments to the manual task, not to the auto tasks that were waiting", async () => {
+    const gate = new PriorityGate(2);
+    const started: string[] = [];
+    const heldReplies = new Map<string, (r: Response) => void>();
+    const runTask = (label: string, priority: number, hold: boolean) => {
+      const fetchImpl = vi.fn<FetchLike>(() => {
+        started.push(label);
+        if (!hold || heldReplies.has(label)) return Promise.resolve(bubble(label));
+        return new Promise<Response>((resolve) => heldReplies.set(label, resolve));
+      });
+      const { codec } = stripCodec();
+      return translateDirect(settings, { ...base, codec, fetchImpl, acquireSlot: () => gate.acquire(priority) });
+    };
+
+    // Two auto strips occupy both slots with their first segment.
+    const a = runTask("A", AUTO, true);
+    const b = runTask("B", AUTO, true);
+    await vi.waitFor(() => expect(started).toEqual(["A", "B"]));
+    // Two more auto strips queue up, then the user asks for a third strip by hand.
+    const c = runTask("C", AUTO, false);
+    const d = runTask("D", AUTO, false);
+    await vi.waitFor(() => expect(gate.queued).toBe(2));
+    const m = runTask("M", MANUAL, false);
+    await vi.waitFor(() => expect(gate.queued).toBe(3));
+
+    // The first segment of A returns: its slot is free before A asks for the next one. The manual task takes it.
+    heldReplies.get("A")!(bubble("A"));
+    await vi.waitFor(() => expect(started).toContain("M"));
+    expect(started.slice(0, 3)).toEqual(["A", "B", "M"]);
+
+    heldReplies.get("B")!(bubble("B"));
+    await Promise.all([a, b, c, d, m]);
+    // Nobody is starved: every task read all four segments (4 requests each).
+    for (const label of ["A", "B", "C", "D", "M"]) expect(started.filter((s) => s === label)).toHaveLength(4);
+  });
+
+  it("asks for a slot for every segment, and gives each one back", async () => {
+    const gate = new PriorityGate(2);
+    const slots: number[] = [];
+    const { codec } = stripCodec();
+    await translateDirect(settings, {
+      ...base,
+      codec,
+      fetchImpl: vi.fn<FetchLike>(async () => bubble("x")),
+      acquireSlot: (segment) => {
+        slots.push(segment);
+        return gate.acquire(0);
+      },
+    });
+    expect(slots).toEqual([0, 1, 2, 3]);
+    expect(gate.inFlight).toBe(0);
+  });
+
+  it("stops waiting for a slot when the task is cancelled", async () => {
+    const gate = new PriorityGate(1);
+    const hold = await gate.acquire(0);
+    const controller = new AbortController();
+    const { codec } = stripCodec();
+    const run = translateDirect(settings, {
+      ...base,
+      codec,
+      fetchImpl: vi.fn<FetchLike>(async () => bubble("x")),
+      signal: controller.signal,
+      acquireSlot: () => gate.acquire(0, controller.signal),
+    });
+    await vi.waitFor(() => expect(gate.queued).toBe(1));
+    controller.abort();
+    expect(await run).toMatchObject({ error: { code: "timeout" } });
+    expect(codec.closed).toBe(1);
+    hold();
   });
 });

@@ -138,9 +138,6 @@ export default defineBackground(() => {
     const withPerf = (reply: BridgeTranslateReply): BridgeTranslateReply => (perf ? { ...reply, perf: perf.finish() } : reply);
     try {
       emit({ type: "stage", stage: "queued" });
-      const gateStart = performance.now();
-      release = await gateFor(key).acquire(priority, controller.signal);
-      const gateWait = performance.now() - gateStart;
       await originRuleReady;
       // Choose the backend for every request: the app may have been closed, reopened or moved to another port,
       // and the user may have changed the settings.
@@ -165,8 +162,7 @@ export default defineBackground(() => {
           ...(kind === "direct" ? { provider: settings.direct.provider, model: settings.direct.model } : {}),
         },
       );
-      perf.addGateWait(gateWait);
-      emit({ type: "stage", stage: "translating" });
+      const gate = gateFor(key);
 
       if (kind === "direct") {
         const pattern = originPatternFor(settings.direct.baseUrl);
@@ -176,7 +172,21 @@ export default defineBackground(() => {
         const bytes = await perf.timed((ms) => (perf!.perf.imageMs += ms), () => imageBytes(src, referer));
         const targetLang = (await storage.getItem<string>("sync:target-lang").catch(() => null)) ?? DefaultConfig.targetLang;
         const timeline = perf;
+        // The direct API takes a place at the gate for each request, not for the whole picture: a long strip that
+        // is only half read gives its place back between segments, so a task that matters more goes next.
+        let segmentTotal = 0;
+        let announced = false;
         const reply = await translateDirect(settings.direct, {
+          acquireSlot: async () => {
+            const waitStart = performance.now();
+            const give = await gate.acquire(priority, controller.signal);
+            timeline.addGateWait(performance.now() - waitStart);
+            if (!announced) {
+              announced = true;
+              emit({ type: "stage", stage: "translating", done: 0, ...(segmentTotal > 0 ? { total: segmentTotal } : {}) });
+            }
+            return give;
+          },
           bytes,
           codec: createBrowserCodec((ms) => timeline.addDecode(ms)),
           targetLang,
@@ -185,7 +195,9 @@ export default defineBackground(() => {
           signal: controller.signal,
           focus,
           onlySegments,
-          onProgress: (done, total) => emit({ type: "stage", stage: "translating", done, total }),
+          onProgress: (_done, total) => {
+            segmentTotal = total;
+          },
           onSegment: (info) => {
             timeline.addSegmentArrival(info.index);
             emit({ type: "segment", index: info.index, total: info.total, done: info.done, units: info.units, truncated: info.truncated });
@@ -213,6 +225,11 @@ export default defineBackground(() => {
       }
 
       if (!probe || !probe.ok) return { error: probe && !probe.ok ? probe.error : { code: "unreachable", message: "Cannot reach the app" } };
+      // The app takes one request at a time per tab slot; the whole translation holds the place.
+      const gateStart = performance.now();
+      release = await gate.acquire(priority, controller.signal);
+      perf.addGateWait(performance.now() - gateStart);
+      emit({ type: "stage", stage: "translating" });
       const bytes = await perf.timed((ms) => (perf!.perf.imageMs += ms), () => imageBytes(src, referer));
       const reply = await translateViaBridge({ port: probe.port }, { bytes, boxes, context, priority, signal: controller.signal, timeoutMs: BRIDGE_TRANSLATE_TIMEOUT_MS });
       if ("result" in reply) perf.perf.app = reply.result.timings;

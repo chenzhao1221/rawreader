@@ -334,6 +334,17 @@ class Session {
     );
   }
 
+  /** The menu entry "translate this page's pictures" (queues every loaded picture, none of them by hand). */
+  async sendPageCommand(page) {
+    const ok = await this.swEval(`(async () => {
+      const tabs = await chrome.tabs.query({});
+      const tab = tabs.find((t) => t.url === ${JSON.stringify(page.url)});
+      if (!tab) return "no-tab";
+      try { await chrome.tabs.sendMessage(tab.id, { type: "CONTEXT_TRANSLATE_PAGE" }); return "sent"; } catch (e) { return String(e.message || e); }
+    })()`);
+    if (ok !== "sent") throw new Error(`page command: ${ok}`);
+  }
+
   async close() {
     if (flag("verbose") && this.logs.length) console.log(`\nbrowser log:\n${this.logs.slice(-30).join("\n")}`);
     await this.chrome.stop();
@@ -633,6 +644,30 @@ async function runChecks(ctx) {
       check("retry: the picture is complete and now cached", !retried.timedOut && (await cacheKeys()) === cachedBefore + 1, String(await cacheKeys()));
       const rec = (await session.perfLog()).slice(before).filter(isStrip).pop();
       check("failed segment: the timing record says partial", rec?.outcome === "partial", rec?.outcome);
+      await session.closePage(page);
+    }
+
+    // 7. Queue order: pictures queued from off screen first, then the menu click on the strip that is in view.
+    {
+      const page = await session.openPage(`${base}/queue.html`);
+      await session.pageEval(page, "window.scrollTo(0, 9000)"); // rows 9000-9900 of the strip are in view, the five pictures are below
+      await sleep(500);
+      await sleep(1500);
+      const before = (await session.perfLog()).length;
+      await session.sendPageCommand(page); // queue order: far1..far5, then the strip; three run at once
+      await sleep(200);
+      await session.rightClickAndTranslate(page, SCENARIO.strip.point, `${base}/img/strip-800x10000.png?v=queue`);
+      const records = [];
+      await until(async () => {
+        const log = (await session.perfLog()).slice(before);
+        records.length = 0;
+        records.push(...log);
+        return log.length >= 6;
+      }, 180000, "six timing records", 500);
+      const strip = records.find(isStrip);
+      const far = records.filter((r) => !isStrip(r)).sort((a, b) => a.marks.dequeue - b.marks.dequeue);
+      check("queue: the strip was started before the 4th and 5th off-screen picture", !!strip && far.length === 5 && strip.marks.dequeue < far[3].marks.dequeue, `strip ${strip?.marks.dequeue} ms, off-screen starts ${far.map((r) => Math.round(r.marks.dequeue)).join(", ")}`);
+      check("queue: the strip is the manual one", strip?.origin === "manual", strip?.origin);
       await session.closePage(page);
     }
   } finally {
