@@ -102,6 +102,24 @@ describe("BridgeMemo", () => {
     expect(calls.length).toBe(1);
   });
 
+  it("answers a reordered box list from the stored answer, with the translations in the new order", async () => {
+    const { memo, calls } = setup([{ result: twoUnits }]);
+    await memo.detect();
+    const out = await memo.translate([
+      { x1: 20, y1: 20, x2: 30, y2: 30, confidence: 1 } as Bbox,
+      { x1: 0, y1: 0, x2: 10, y2: 10, confidence: 1 } as Bbox,
+    ]);
+    expect("translations" in out && out.translations).toEqual(["B", "A"]);
+    expect(calls.length).toBe(1);
+  });
+
+  it("still sends a request when a box moved or the count changed", async () => {
+    const { memo, calls } = setup([{ result: twoUnits }, { result: response([unit(box(0, 0, 10, 10)), unit(box(30, 30, 40, 40))]) }]);
+    await memo.detect();
+    await memo.translate([{ x1: 0, y1: 0, x2: 10, y2: 10 } as Bbox, { x1: 30, y1: 30, x2: 40, y2: 40 } as Bbox]);
+    expect(calls.length).toBe(2);
+  });
+
   it("sends a follow-up request with boxes when the user changed them", async () => {
     const edited = response([unit(box(0, 0, 50, 50), { translation: "C" })]);
     const { memo, calls } = setup([{ result: twoUnits }, { result: edited }]);

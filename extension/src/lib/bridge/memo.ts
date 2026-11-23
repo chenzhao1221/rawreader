@@ -80,6 +80,31 @@ export function sameBoxes(a: readonly Bbox[], b: readonly Bbox[], tolerance = 1)
 }
 
 /**
+ * For each wanted box, the index of the stored box that covers the same region (to a pixel), or null when the two
+ * lists are not the same regions in some order. The overlay sorts boxes into reading order, so the list it asks
+ * about can be a reordering of the one the answer came with; that must not cost a second request.
+ */
+export function matchBoxOrder(stored: readonly Bbox[], wanted: readonly Bbox[], tolerance = 1): number[] | null {
+  if (stored.length !== wanted.length) return null;
+  const used = new Array<boolean>(stored.length).fill(false);
+  const order: number[] = [];
+  for (const box of wanted) {
+    const found = stored.findIndex(
+      (candidate, i) =>
+        !used[i] &&
+        Math.abs(candidate.x1 - box.x1) <= tolerance &&
+        Math.abs(candidate.y1 - box.y1) <= tolerance &&
+        Math.abs(candidate.x2 - box.x2) <= tolerance &&
+        Math.abs(candidate.y2 - box.y2) <= tolerance,
+    );
+    if (found < 0) return null;
+    used[found] = true;
+    order.push(found);
+  }
+  return order;
+}
+
+/**
  * Per-image memo for bridge mode. LMT asks for boxes first and translations second; the app does both in one
  * request, so the first call keeps the whole answer and the second returns it without a request. A second call
  * with different boxes (the user edited or drew regions) goes out again with `boxes`.
@@ -107,7 +132,10 @@ export class BridgeMemo {
         v: 1, hash: "", width: 0, height: 0, cached: false, units: [], timings: { detectMs: 0, ocrMs: 0, translateMs: 0 },
       });
     }
-    if (this.full && sameBoxes(responseToBboxes(this.full), bboxes)) return responseToTranslation(this.full);
+    if (this.full) {
+      const order = matchBoxOrder(responseToBboxes(this.full), bboxes);
+      if (order) return responseToTranslation({ ...this.full, units: order.map((i) => this.full!.units[i]!) });
+    }
 
     const edited = await this.call(bboxes.map(toBridgeBox));
     if ("error" in edited) return { error: describeBridgeError(edited.error) };
