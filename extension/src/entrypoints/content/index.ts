@@ -129,8 +129,8 @@ export default defineContentScript({
     const translatedSrcMap = new Map<string, string>();
     const inpaintedSrcCache = new Map<
       string,
-      { url: string; boxesKey: string }
-    >(); // inpainted base images, keyed to the exact set of painted boxes
+      { url: string; boxesKey: string; keys?: string[]; declined?: string[] }
+    >(); // inpainted base images, keyed to the exact set of painted boxes (and the boxes it holds, for adding to it)
     const debugEntryIdBySrc = new Map<string, string>(); // src → last debug entry id
     // One entry per page element that is queued or running. The status bar and the timing record share its number.
     interface TaskCtx {
@@ -917,6 +917,8 @@ export default defineContentScript({
                   // without painting was a latent defect for failed OCR too).
                   timeline.mark("render-start");
                   const paintable = bboxes.filter((_, i) => translations[i]);
+                  const boxKeyOf = (b: Bbox) => `${Math.round(b.x1)},${Math.round(b.y1)},${Math.round(b.x2)},${Math.round(b.y2)}`;
+                  const paintKeys = paintable.map(boxKeyOf);
                   const boxesKey = JSON.stringify(
                     paintable.map((b) => [
                       Math.round(b.x1),
@@ -933,22 +935,37 @@ export default defineContentScript({
                     | undefined;
                   let inpaintMs: number | undefined;
                   if (!cached || cached.boxesKey !== boxesKey) {
+                    // A strip that is drawn piece by piece asks again with the regions it had plus new ones. When every
+                    // region erased last time is still wanted, only the new regions are erased, on top of the picture
+                    // that was cleaned last time, instead of cleaning the whole strip again from the original.
+                    const wanted = new Set(paintKeys);
+                    const previous = cached?.keys;
+                    const incremental = !!cached && !!previous && previous.length > 0 && previous.every((k) => wanted.has(k));
+                    const alreadyErased = new Set(incremental ? previous : []);
+                    const toErase = incremental ? paintable.filter((b) => !alreadyErased.has(boxKeyOf(b))) : paintable;
                     const tInpaint = performance.now();
-                    const res = await inpaintImage(src, paintable);
+                    const res =
+                      incremental && toErase.length === 0
+                        ? { url: cached!.url, method: "fast" as const, regions: undefined, error: undefined }
+                        : await inpaintImage(incremental ? cached!.url : src, toErase);
                     inpaintMs = performance.now() - tInpaint;
                     timeline.add("inpaint-ms", inpaintMs);
-                    cached = { url: res.url, boxesKey };
+                    const declinedBefore = new Set(incremental ? cached!.declined ?? [] : []);
+                    cached = { url: res.url, boxesKey, keys: paintKeys, declined: [...declinedBefore] };
                     inpaintedSrcCache.set(src, cached);
                     inpaintMethod = res.method;
 
+                    // Regions the ladder gave up on last time keep their mark.
+                    for (const b of paintable) if (declinedBefore.has(boxKeyOf(b))) b.inpaintDeclined = true;
                     if (res.regions) {
                       // Bind by the record's own index, not by array position:
                       // `index` is the contract the ladder guarantees against
-                      // the bbox array it was handed (`paintable`).
+                      // the bbox array it was handed (`toErase`).
                       res.regions.forEach((r) => {
-                        const target = paintable[r.index];
+                        const target = toErase[r.index];
                         if (r.method === "declined" && target) {
                           target.inpaintDeclined = true;
+                          cached!.declined!.push(boxKeyOf(target));
                         }
                       });
                     }

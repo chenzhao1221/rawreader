@@ -603,8 +603,42 @@ async function runChecks(ctx) {
       await session.rightClickAndTranslate(page, SCENARIO.strip.point, `${base}/img/strip-800x10000.png?v=check5`);
       const rec = await waitForRecord(session, before, 90000, isStrip);
       check("strip: the first sentence is painted well before the whole picture", rec.firstVisibleMs !== null && rec.doneMs !== null && rec.doneMs - rec.firstVisibleMs > 3000, `${rec.firstVisibleMs} ms / ${rec.doneMs} ms`);
-      check("strip: four segments, four requests, the picture decoded once", rec.bg?.segments === 4 && ctx.mock.control.count === 4 && rec.bg?.decodeCount === 1, `requests ${ctx.mock.control.count}, decodes ${rec.bg?.decodeCount}`);
+      // The strip was drawn piece by piece (erasing only the new regions each time). Opened again from the page cache it is
+      // drawn in one go from the original: the two pictures must be the same.
+      const srcOf = (p) => session.pageEval(p, `(() => { const h = document.querySelector("lmt-overlay"); const i = h && h.shadowRoot && h.shadowRoot.querySelector("img"); return i ? i.src : ""; })()`);
+      await sleep(800);
+      const grownSrc = await srcOf(page);
       await session.closePage(page);
+      const again = await session.openPage(`${base}/strip.html?v=check5`);
+      await sleep(300);
+      await session.rightClickAndTranslate(again, SCENARIO.strip.point, `${base}/img/strip-800x10000.png?v=check5`);
+      await watch(again, (s) => s.overlays.some((o) => o.shown));
+      await sleep(500);
+      const wholeSrc = await srcOf(again);
+      if (process.env.RAWREADER_DUMP_DIR) {
+        // Debug aid: keep the two pictures to look at them.
+        const save = (name, src) => fs.writeFileSync(path.join(process.env.RAWREADER_DUMP_DIR, name), Buffer.from(src.split(",")[1] ?? "", "base64"));
+        fs.mkdirSync(process.env.RAWREADER_DUMP_DIR, { recursive: true });
+        save("strip-piece-by-piece.png", grownSrc);
+        save("strip-in-one-go.png", wholeSrc);
+      }
+      // Piece by piece, only the new regions are erased on top of the picture cleaned before; in one go everything is erased
+      // from the original. Not byte-identical: where two boxes overlap, the order of erasing changes the fill. The mock answers
+      // every segment with the same relative boxes, so neighbouring segments produce overlapping boxes (about 0.3 % of the
+      // picture); a real strip does not. Everything else must match.
+      const diff = await session.pageEval(again, `(async () => {
+        const load = (src) => new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = src; });
+        const [a, b] = await Promise.all([load(${JSON.stringify(grownSrc)}), load(${JSON.stringify(wholeSrc)})]);
+        if (a.width !== b.width || a.height !== b.height) return { size: false };
+        const pixels = (img) => { const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; const x = c.getContext("2d"); x.drawImage(img, 0, 0); return x.getImageData(0, 0, c.width, c.height).data; };
+        const da = pixels(a), db = pixels(b);
+        let different = 0, biggest = 0;
+        for (let k = 0; k < da.length; k += 4) { const d = Math.max(Math.abs(da[k] - db[k]), Math.abs(da[k + 1] - db[k + 1]), Math.abs(da[k + 2] - db[k + 2])); if (d > 12) different++; if (d > biggest) biggest = d; }
+        return { size: true, share: different / (da.length / 4), biggest };
+      })()`);
+      check("strip: drawn piece by piece it is the same picture as drawn in one go (page cache)", grownSrc !== "" && diff.size === true && diff.share < 0.005, JSON.stringify(diff));
+      await session.closePage(again);
+      check("strip: four segments, four requests, the picture decoded once", rec.bg?.segments === 4 && ctx.mock.control.count === 4 && rec.bg?.decodeCount === 1, `requests ${ctx.mock.control.count}, decodes ${rec.bg?.decodeCount}`);
 
       const before2 = (await session.perfLog()).length;
       const mid = await session.openPage(`${base}/strip.html?v=check5b`);
