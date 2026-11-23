@@ -1,6 +1,7 @@
 <!-- Portions ported from libre-manga-translator src/lib/components/Overlay.svelte @ 1ddddc761ff18e6155a071ad3a3f603a836d7136,
      AGPL-3.0-or-later, (C) 2026 Libre Manga Translator; modified by RawReader. -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { TriangleAlert } from "lucide-svelte";
   import { DefaultConfig, resolveLangGroup } from "@/lib/configs";
   import { env } from "@/lib/env";
@@ -58,6 +59,8 @@
           diagnostics?: TranslationDiagnostics;
           gateSkip?: (GateReason | null)[];
           gate?: DebugEntry["gate"];
+          /** Long strip: segments that did not come back. */
+          failedSegments?: { segment: number; code: string; message: string }[];
         }
       | { error: string }
     >;
@@ -74,8 +77,25 @@
       addedPatches: Bbox[],
       removedPatches: Bbox[],
     ) => Promise<string>;
-    /** Called after a translated picture was loaded into the page and one frame was drawn. */
-    onPaint?: () => void;
+    /**
+     * Called after a translated picture was loaded into the page and one frame was drawn. `partial`: the picture
+     * shows only the part of a long strip that has been read so far; `final`: it shows everything there is.
+     */
+    onPaint?: (kind: "partial" | "final") => void;
+    /** Long strips: the pieces of the answer as they arrive, to draw a partly translated picture. Returns the unsubscribe function. */
+    subscribePartial?: (listener: (snapshot: PartialView) => void) => () => void;
+    /** A strip that was missing segments is complete now and drawn; the page can be stored as finished. */
+    onSettled?: (bboxes: Bbox[], translations: Translations, sourceTexts: string[]) => Promise<void> | void;
+  }
+
+  /** The picture as far as it has been read. Boxes and texts are index-aligned. */
+  interface PartialView {
+    bboxes: Bbox[];
+    translations: string[];
+    sourceTexts: string[];
+    /** Every segment has been read (after a retry that filled the last gap). */
+    complete: boolean;
+    failedCount: number;
   }
 
   let {
@@ -97,6 +117,8 @@
     applyInpaintPatches,
     getNotice,
     onPaint,
+    subscribePartial,
+    onSettled,
   }: Props = $props();
 
   const rawDisplaySrc = $derived(rawImageUrl || originalSrc);
@@ -127,7 +149,7 @@
   let toolbarPosition = $state(getInitialToolbarPosition());
   let toolbarDragStart = $state<{ startX: number; startY: number; initialX: number; initialY: number } | null>(null);
   let readingDirection = $state<"rtl" | "ltr">("rtl");
-  let mode = $state<"loading" | "refining" | "results" | "editing">("loading");
+  let mode = $state<"loading" | "partial" | "refining" | "results" | "editing">("loading");
   let activeEditorLayer = $state<EditorLayer>("inpainted");
   let activeInpaintTool = $state<InpaintTool>("none");
   let inpaintPatches = $state<InpaintPatch[]>([]);
@@ -374,34 +396,38 @@
     Registry.markIdle(originalSrc, undefined, ownerEl);
   }
 
-function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
-    if (bboxes.length === 0) return;
+/**
+   * Reading order of boxes as indices into `boxes`: grouped into horizontal bands (panels), then inside a band
+   * right to left (manga) or left to right. The same order is used for the whole picture and for a partly read one.
+   */
+  function readingOrder(boxes: Bbox[], direction: "rtl" | "ltr" = "rtl"): number[] {
+    if (boxes.length === 0) return [];
 
     let totalHeight = 0;
-    bboxes.forEach((box) => {
+    boxes.forEach((box) => {
       totalHeight += box.y2 - box.y1;
     });
-    const avgHeight = totalHeight / bboxes.length;
-
-    const originalBboxes = bboxes.slice();
+    const avgHeight = totalHeight / boxes.length;
 
     // Calculate Center coordinates and sort strictly top-to-bottom to prepare for grouping
-    const boxesWithCenters = bboxes.map(box => ({
-      box,
-      centerY: (box.y1 + box.y2) / 2,
-      centerX: (box.x1 + box.x2) / 2
-    })).sort((a, b) => a.centerY - b.centerY);
+    const withCenters = boxes
+      .map((box, index) => ({
+        index,
+        centerY: (box.y1 + box.y2) / 2,
+        centerX: (box.x1 + box.x2) / 2,
+      }))
+      .sort((a, b) => a.centerY - b.centerY);
 
     // Agglomerative Clustering: Group into distinct Horizontal Bands (Panels)
-    const bands: typeof boxesWithCenters[] = [];
-    let currentBand = [boxesWithCenters[0]];
-    let currentBandAvgY = boxesWithCenters[0].centerY;
+    const bands: (typeof withCenters)[] = [];
+    let currentBand = [withCenters[0]];
+    let currentBandAvgY = withCenters[0].centerY;
 
     // 80% of average bubble height is a highly reliable threshold to detect panel gutters
     const yTolerance = avgHeight * 0.8;
 
-    for (let i = 1; i < boxesWithCenters.length; i++) {
-      const item = boxesWithCenters[i];
+    for (let i = 1; i < withCenters.length; i++) {
+      const item = withCenters[i];
       if (item.centerY - currentBandAvgY < yTolerance) {
         currentBand.push(item);
         currentBandAvgY = currentBand.reduce((sum, curr) => sum + curr.centerY, 0) / currentBand.length;
@@ -416,26 +442,32 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     // Sort inside each panel using reading flow:
     // RTL (Manga): Top-Right to Bottom-Left
     // LTR (Western/Manhwa): Top-Left to Bottom-Right
-    const result: typeof bboxes = [];
+    const result: number[] = [];
     const weightY = 2.0;
 
     bands.forEach((band) => {
       band.sort((a, b) => {
         if (direction === "ltr") {
-          const scoreA = -a.centerX - (a.centerY * weightY);
-          const scoreB = -b.centerX - (b.centerY * weightY);
+          const scoreA = -a.centerX - a.centerY * weightY;
+          const scoreB = -b.centerX - b.centerY * weightY;
           return scoreB - scoreA;
         } else {
-          const scoreA = a.centerX - (a.centerY * weightY);
-          const scoreB = b.centerX - (b.centerY * weightY);
+          const scoreA = a.centerX - a.centerY * weightY;
+          const scoreB = b.centerX - b.centerY * weightY;
           return scoreB - scoreA;
         }
       });
 
-      result.push(...band.map(item => item.box));
+      result.push(...band.map((item) => item.index));
     });
+    return result;
+  }
 
-    bboxes = result;
+  function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
+    if (bboxes.length === 0) return;
+
+    const originalBboxes = bboxes.slice();
+    bboxes = readingOrder(bboxes, direction).map((i) => originalBboxes[i]);
 
     // Verify if order actually changed to prevent unnecessary history states
     const isChanged = !originalBboxes.every(
@@ -445,7 +477,6 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     if (isChanged) saveHistory();
     activeIndex = null;
   }
-
   function saveHistory() {
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push($state.snapshot(bboxes));
@@ -469,9 +500,83 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     }
   }
 
+  // ── A long strip drawn while it is still being read ──
+  // Which kind of picture the next load of the translated <img> shows (the page measures the first and the last).
+  let paintKind: "partial" | "final" = "final";
+  // Only used when the user did not ask for the box-adjusting step: then the picture can grow as segments arrive.
+  let progressive = false;
+  // The final flow (the whole answer is in) has begun: later pieces are already part of it.
+  let finalizing = false;
+  let latestPartial: PartialView | null = null;
+  let partialRun: Promise<void> | null = null;
+  let unsubscribePartial: (() => void) | null = null;
+  const partialIds = new Map<string, string>();
+
+  onDestroy(() => unsubscribePartial?.());
+
+  /**
+   * Puts a rendered picture on the page. The page measures the paint after the picture loads; when the address is
+   * the one already shown (the last piece drew the same picture the final render did) the browser loads nothing, so
+   * the paint is reported from here.
+   */
+  function showTranslated(url: string, kind: "partial" | "final") {
+    paintKind = kind;
+    if (url === translatedUrl && (mode === "partial" || mode === "results")) {
+      requestAnimationFrame(() => onPaint?.(kind));
+      return;
+    }
+    translatedUrl = url;
+  }
+
+  /** The same box keeps the same id from one piece to the next. */
+  function stableBoxId(box: Bbox): string {
+    const key = `${Math.round(box.x1)},${Math.round(box.y1)},${Math.round(box.x2)},${Math.round(box.y2)}`;
+    let id = partialIds.get(key);
+    if (!id) {
+      id = generateBoxId();
+      partialIds.set(key, id);
+    }
+    return id;
+  }
+
+  async function drawPartials() {
+    while (latestPartial) {
+      const view = latestPartial;
+      latestPartial = null;
+      // While the user is editing or adjusting boxes, or the whole answer is being drawn, pieces are not applied.
+      if (mode === "editing" || mode === "refining") continue;
+      if (finalizing && mode !== "results") continue;
+      if (mode !== "loading" && mode !== "partial" && mode !== "results") continue;
+      const order = readingOrder(view.bboxes);
+      const nextBoxes = order.map((i) => ({ ...view.bboxes[i], id: stableBoxId(view.bboxes[i]) }));
+      const nextTexts = order.map((i) => view.translations[i] ?? "");
+      const nextSources = order.map((i) => view.sourceTexts[i] ?? "");
+      bboxes = nextBoxes;
+      translations = nextTexts;
+      sourceTexts = nextSources;
+      const url = await renderTranslations(nextTexts.slice(), $state.snapshot(nextBoxes));
+      showTranslated(url, view.complete ? "final" : "partial");
+      if (mode === "loading") mode = "partial";
+      if (view.complete) await onSettled?.($state.snapshot(bboxes), nextTexts.slice(), nextSources.slice());
+    }
+  }
+
+  function onPartial(view: PartialView) {
+    latestPartial = view;
+    partialRun ??= drawPartials()
+      .catch((err) => console.warn("RawReader: drawing the partly translated picture failed:", err))
+      .finally(() => {
+        partialRun = null;
+        if (latestPartial) onPartial(latestPartial);
+      });
+  }
+
   // `autoStart`: run from the page load without a user click, so a failure must not open manual selection by default.
   async function executeTranslation(autoStart = false) {
-    mode = "loading";
+    finalizing = true;
+    if (partialRun) await partialRun;
+    // A strip that is already showing its first segments stays on screen while the rest is finished.
+    if (mode !== "partial") mode = "loading";
     applyBboxesSort();
 
     // If the expected rec pack isn't cached, say so: otherwise a first-run
@@ -509,13 +614,14 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       b.gateSkip = result.gateSkip?.[i] ?? undefined;
     });
 
-    mode = "loading";
+    if (mode !== "partial") mode = "loading";
     loadingMsg = "正在渲染…";
     try {
-      translatedUrl = await renderTranslations(
+      const url = await renderTranslations(
         $state.snapshot(translations),
         $state.snapshot(bboxes),
       );
+      showTranslated(url, "final");
     } catch (err) {
       mode = "refining";
       showError((err as Error).message);
@@ -523,7 +629,9 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       return;
     }
     mode = "results";
-    Registry.markDone(originalSrc, undefined, ownerEl);
+    // A strip that is missing segments is not a finished page: the registry keeps it as partial (the page script set
+    // that) and the status line offers the retry.
+    if (!result.failedSegments?.length) Registry.markDone(originalSrc, undefined, ownerEl);
   }
 
   async function handleConfirm() {
@@ -580,6 +688,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     mode = "loading";
     loadingMsg = "正在渲染…";
     try {
+      paintKind = "final";
       translatedUrl = await renderTranslations(
         $state.snapshot(translations),
         $state.snapshot(bboxes),
@@ -629,6 +738,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       );
     }
     try {
+      paintKind = "final";
       translatedUrl = await renderTranslations(
         $state.snapshot(translations),
         $state.snapshot(bboxes),
@@ -801,9 +911,23 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
   onMount(async () => {
     const initialCache = await getTranslationCache();
 
+    // The settings that decide what happens after detection are read while the request runs.
+    const flowSettings = Promise.all([
+      storage.getItem<boolean>("sync:skip-bbox-refining"),
+      storage.getItem<boolean>("sync:auto-translate"),
+      storage.getItem<string>("sync:current-mode"),
+    ]);
+    const detection = initialCache ? null : requestBubbleDetection();
+    if (detection && subscribePartial) {
+      const [skip, auto, current] = await flowSettings;
+      // A user who adjusts the boxes before translating sees nothing until the whole answer is in.
+      progressive = !!(skip || auto || current === "gemini");
+      if (progressive) unsubscribePartial = subscribePartial(onPartial);
+    }
+
     const rawBboxes = initialCache
       ? initialCache.bboxes
-      : await requestBubbleDetection();
+      : await detection!;
 
     if (!Array.isArray(rawBboxes)) {
       const onlyNoText = await readManualOnlyNoText();
@@ -852,11 +976,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       cleanedUrl = initialCache.cleanedSrc ?? "";
       Registry.markDone(originalSrc, undefined, ownerEl);
     } else {
-      const [skipRefining, autoTranslate, currentMode] = await Promise.all([
-        storage.getItem<boolean>("sync:skip-bbox-refining"),
-        storage.getItem<boolean>("sync:auto-translate"),
-        storage.getItem<string>("sync:current-mode"),
-      ]);
+      const [skipRefining, autoTranslate, currentMode] = await flowSettings;
       // Gemini transcribes and translates the whole page itself, answering one
       // item per numbered box, so manual box review adds a click without changing
       // what is uploaded. Zero boxes still opens the editor — there is nothing to
@@ -1195,7 +1315,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     id="lmt-overlay"
     role="presentation"
     tabindex="-1"
-    class="absolute top-0 left-0 overflow-hidden {mode === 'loading' || mode === 'results' ? 'pointer-events-none' : 'pointer-events-auto'} group z-50 w-full h-full outline-none"
+    class="absolute top-0 left-0 overflow-hidden {mode === 'loading' || mode === 'partial' || mode === 'results' ? 'pointer-events-none' : 'pointer-events-auto'} group z-50 w-full h-full outline-none"
     onmousedown={isolateHostEvents}
     onpointerdown={isolateHostEvents}
     onpointerup={isolateHostEvents}
@@ -1263,13 +1383,13 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     />
   {/if}
 
-  {#if mode === "results"}
+  {#if mode === "results" || mode === "partial"}
     <img
       src={showOriginal ? rawDisplaySrc : translatedUrl}
       alt={showOriginal ? "原图" : "译图"}
       class="w-full h-full object-contain select-none pointer-events-none"
       onload={() => {
-        if (!showOriginal) requestAnimationFrame(() => onPaint?.());
+        if (!showOriginal) requestAnimationFrame(() => onPaint?.(paintKind));
       }}
     />
     {#if !showOriginal}
@@ -1330,15 +1450,17 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       {/each}
     {/if}
 
-    <OverlayToolbar
-      mode="results"
-      {showOriginal}
-      onRefine={handleBackToRefine}
-      onEditTranslations={openEditPanel}
-      onExportJpg={saveJpg}
-      onToggleOriginal={() => (showOriginal = !showOriginal)}
-      onClose={onClose}
-    />
+    {#if mode === "results"}
+      <OverlayToolbar
+        mode="results"
+        {showOriginal}
+        onRefine={handleBackToRefine}
+        onEditTranslations={openEditPanel}
+        onExportJpg={saveJpg}
+        onToggleOriginal={() => (showOriginal = !showOriginal)}
+        onClose={onClose}
+      />
+    {/if}
   {/if}
 
   {#if mode === "editing"}

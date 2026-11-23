@@ -158,10 +158,17 @@ describe("translateDirect on a long strip", () => {
     expect(reply).toMatchObject({ result: { units: [{ translation: "A" }] } });
   });
 
-  it("fails the whole image when a segment fails twice", async () => {
+  it("fails the whole image only when every segment fails twice", async () => {
     const fetchImpl = vi.fn<FetchLike>(async () => json({ error: { message: "busy" } }, 500));
     const reply = await translateDirect(settings, { bytes: JPEG, codec: strip, targetLang: "zh", fetchImpl });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(reply).toMatchObject({ error: { code: "direct-server" } });
+  });
+
+  it("stops at once on a failure that no other segment can fix (a refused key)", async () => {
+    const fetchImpl = vi.fn<FetchLike>(async () => json({ error: { message: "bad key" } }, 401));
+    const reply = await translateDirect(settings, { bytes: JPEG, codec: strip, targetLang: "zh", fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(reply).toMatchObject({ error: { code: "direct-auth" } });
   });
 });

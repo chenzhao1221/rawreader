@@ -114,10 +114,63 @@ export interface SegmentUnit<T> {
  * twice. Units from the same segment are never merged, so two real bubbles stay apart.
  */
 export function mergeSegmentUnits<T>(units: SegmentUnit<T>[]): SegmentUnit<T>[] {
-  const kept: SegmentUnit<T>[] = [];
-  for (const unit of units) {
+  return mergeIncremental<T>([], units).kept;
+}
+
+/**
+ * Adds the units of one more segment to the ones already shown. A unit that overlaps a unit of another segment
+ * (IoU of at least DUPLICATE_IOU) is dropped, so the one on screen stays where it is and a bubble seen by two
+ * segments is shown once, whichever segment answers first. Units of the same segment are never merged.
+ * `accepted` holds only the new units that were kept.
+ */
+export function mergeIncremental<T>(
+  displayed: readonly SegmentUnit<T>[],
+  incoming: readonly SegmentUnit<T>[],
+): { kept: SegmentUnit<T>[]; accepted: SegmentUnit<T>[] } {
+  const kept = [...displayed];
+  const accepted: SegmentUnit<T>[] = [];
+  for (const unit of incoming) {
     const duplicate = kept.some((k) => k.segment !== unit.segment && iou(k.box, unit.box) >= DUPLICATE_IOU);
-    if (!duplicate) kept.push(unit);
+    if (duplicate) continue;
+    kept.push(unit);
+    accepted.push(unit);
   }
-  return kept;
+  return { kept, accepted };
+}
+
+/** Where the reader is looking, in fractions (0..1) of the image height. */
+export interface Focus {
+  /** Where the user right-clicked. */
+  point?: number | undefined;
+  /** The part of the image that is on screen. */
+  view?: { top: number; bottom: number } | undefined;
+}
+
+/**
+ * The order to send the segments in: the segment around the click first (the one that holds it deepest when two
+ * overlap there), then the segments that are on screen (the more of them on screen, the earlier), then the rest by
+ * distance from the screen. Without a focus the order stays top to bottom. The sort is stable.
+ */
+export function orderSegments(segments: readonly Segment[], focus: Focus | undefined, imageHeight: number): Segment[] {
+  if (!focus || (focus.point === undefined && !focus.view)) return [...segments];
+  const point = focus.point === undefined ? null : clamp01(focus.point) * imageHeight;
+  const view = focus.view ? { top: clamp01(focus.view.top) * imageHeight, bottom: clamp01(focus.view.bottom) * imageHeight } : null;
+
+  const score = (s: Segment) => {
+    const bottom = s.top + s.height;
+    const margin = point !== null && point >= s.top && point < bottom ? Math.min(point - s.top, bottom - point) : -1;
+    const overlap = view ? Math.max(0, Math.min(bottom, view.bottom) - Math.max(s.top, view.top)) : 0;
+    const gap = view ? (overlap > 0 ? 0 : Math.max(s.top - view.bottom, view.top - bottom, 0)) : 0;
+    return { margin, overlap, gap };
+  };
+  return segments
+    .map((segment) => ({ segment, ...score(segment) }))
+    .sort((a, b) => {
+      if ((a.margin >= 0) !== (b.margin >= 0)) return a.margin >= 0 ? -1 : 1;
+      if (a.margin !== b.margin) return b.margin - a.margin;
+      if (a.overlap !== b.overlap) return b.overlap - a.overlap;
+      if (a.gap !== b.gap) return a.gap - b.gap;
+      return a.segment.index - b.segment.index;
+    })
+    .map((x) => x.segment);
 }

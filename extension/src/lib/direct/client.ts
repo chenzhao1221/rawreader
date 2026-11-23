@@ -1,8 +1,8 @@
-﻿// RawReader extension: direct API mode. One request to a vision model does detection, reading and translation.
+// RawReader extension: direct API mode. One request to a vision model does detection, reading and translation.
 // The result has the same shape as the app bridge answer, so BridgeMemo and the overlay need no changes.
 // Network access goes through `fetchImpl` so tests never reach a real API.
 import { bytesToBase64, type FetchLike } from "../bridge/client";
-import type { BridgeBox, BridgeContext, BridgeTranslateReply, BridgeUnit } from "../bridge/protocol";
+import type { BridgeBox, BridgeContext, BridgeTranslateReply, BridgeUnit, SegmentFailure } from "../bridge/protocol";
 import { codeForStatus, scrubMessage, type DirectFailure } from "./errors";
 import { ImageTooLargeError, MAX_SEND_BYTES, MAX_SEND_SIDE, prepareImage, type ImageCodec } from "./image";
 import { looksTruncated, parseModelOutput } from "./parse";
@@ -18,12 +18,14 @@ import {
   type ApiImage,
 } from "./request";
 import {
-  mergeSegmentUnits,
+  mergeIncremental,
+  orderSegments,
   planSegments,
   segmentBoxToWhole,
   segmentOwning,
   shouldTile,
   wholeBoxToSegment,
+  type Focus,
   type Segment,
   type SegmentUnit,
 } from "./tiles";
@@ -74,6 +76,16 @@ export interface DirectTranslateParams extends DirectDeps {
   /** Regions in pixels of the original image (the user drew or edited them). */
   boxes?: BridgeBox[] | undefined;
   now?: (() => number) | undefined;
+  /** Long strips: where the reader is looking, so those segments are requested first. */
+  focus?: Focus | undefined;
+  /** Long strips: only these segments (zero-based). A retry of the ones that failed. */
+  onlySegments?: number[] | undefined;
+  /** Long strips: a segment was read. Its units are in pixels of the whole picture, not yet de-duplicated. */
+  onSegment?: ((info: { index: number; total: number; done: number; units: BridgeUnit[]; truncated: boolean }) => void) | undefined;
+  /** Long strips: a segment failed twice. The others carry on. */
+  onSegmentFailed?: ((info: { index: number; total: number; error: DirectFailure }) => void) | undefined;
+  /** Long strips: how many segments will be requested, and how many are finished. */
+  onProgress?: ((done: number, total: number) => void) | undefined;
 }
 
 /** The model's answer text, and whether the service cut it short. */
@@ -276,7 +288,18 @@ async function cropSegment(codec: ImageCodec, bytes: Uint8Array, segment: Segmen
   throw new ImageTooLargeError();
 }
 
-/** A long strip: one request per overlapping segment, one after another, then the boxes are mapped back. */
+/** Failures that no other segment can do better on: a wrong key, a bad setting, a missing model, a cancel. */
+const FATAL_CODES = new Set(["direct-auth", "direct-config", "direct-not-found", "timeout"]);
+
+/** Same words for a segment that did not come back as for any failed request. */
+const failureOf = (segment: number, error: DirectFailure): SegmentFailure => ({ segment, code: error.code, message: error.message });
+
+/**
+ * A long strip: one request per overlapping segment, one after another. The segment around the click goes first,
+ * then the ones on screen, then the rest (`focus`). Each segment that comes back is reported at once (`onSegment`)
+ * with its boxes mapped to the whole picture. A segment that fails twice is reported (`onSegmentFailed`) and the
+ * others carry on; the answer then lists the failed ones. `onlySegments` runs just those (a retry).
+ */
 async function translateStrip(
   settings: DirectApiSettings,
   params: DirectTranslateParams,
@@ -287,10 +310,24 @@ async function translateStrip(
   const segments = planSegments(w, h, MAX_SEND_SIDE);
   params.trace?.plan?.({ width: w, height: h, segments: segments.length });
   const regions = params.boxes?.length ? regionsOf(params.boxes, w, h) : undefined;
-  const collected: SegmentUnit<{ source: string; translation: string }>[] = [];
-  let truncated = false;
+  const wanted = params.onlySegments ? segments.filter((s) => params.onlySegments!.includes(s.index)) : segments;
 
-  for (const segment of segments) {
+  // The user's regions go to the segment that holds their centre. Each region is sent once. A segment without a
+  // region is not cropped, not encoded and not requested.
+  const ownedBy = (segment: Segment) =>
+    regions ? regions.map((box, index) => ({ box, index })).filter((r) => segmentOwning(r.box, segments, h) === segment.index) : undefined;
+  const work = orderSegments(wanted, params.focus, h)
+    .map((segment) => ({ segment, owned: ownedBy(segment) }))
+    .filter((item) => !item.owned || item.owned.length > 0);
+
+  let shown: SegmentUnit<{ source: string; translation: string }>[] = [];
+  const failed: SegmentFailure[] = [];
+  let truncated = false;
+  let done = 0;
+  params.onProgress?.(0, work.length);
+
+  for (const { segment, owned } of work) {
+    if (params.signal?.aborted) return { error: { code: "timeout", message: "Cancelled" } };
     let segBytes: Uint8Array;
     const encodeStart = performance.now();
     try {
@@ -300,11 +337,7 @@ async function translateStrip(
     }
     params.trace?.encode?.(segment.index, performance.now() - encodeStart);
 
-    // The user's regions go to the segment that holds their centre. Each region is sent once.
-    const owned = regions ? regions.map((box, index) => ({ box, index })).filter((r) => segmentOwning(r.box, segments, h) === segment.index) : undefined;
-    if (owned && owned.length === 0) continue;
     const segRegions = owned?.map((r) => wholeBoxToSegment(r.box, segment, h));
-
     const prompt = buildPrompt({
       targetLang: params.targetLang,
       width: segment.sendWidth,
@@ -317,32 +350,59 @@ async function translateStrip(
     // A failed segment is retried once. A cancelled request is not retried.
     let answer = await callApi(settings, prompt, image, params, { segment: segment.index, attempt: 1 });
     if ("error" in answer && !params.signal?.aborted) answer = await callApi(settings, prompt, image, params, { segment: segment.index, attempt: 2 });
-    if ("error" in answer) return { error: answer.error };
+    if ("error" in answer) {
+      if (FATAL_CODES.has(answer.error.code)) return { error: answer.error };
+      const failure = failureOf(segment.index, answer.error);
+      failed.push(failure);
+      params.onSegmentFailed?.({ index: segment.index, total: work.length, error: answer.error });
+      continue;
+    }
     truncated ||= answer.truncated;
 
     const parseStart = performance.now();
     const parsed = parseModelOutput(answer.text, { width: segment.sendWidth, height: segment.sendHeight, regions: segRegions });
     params.trace?.parse?.(segment.index, performance.now() - parseStart);
+
+    const found: SegmentUnit<{ source: string; translation: string }>[] = [];
     if (owned) {
       // Region mode: the boxes are the user's own, the model only supplies the text, in the same order.
       parsed.units.forEach((u, j) => {
         const region = owned[j];
-        if (region) collected.push({ segment: segment.index, box: region.box, value: { source: u.source, translation: u.translation } });
+        if (region) found.push({ segment: segment.index, box: region.box, value: { source: u.source, translation: u.translation } });
       });
     } else {
       for (const u of parsed.units) {
-        collected.push({
+        found.push({
           segment: segment.index,
           box: segmentBoxToWhole(u.box, segment, h),
           value: { source: u.source, translation: u.translation },
         });
       }
     }
+    // Segments overlap, so one bubble can be read twice. The one already on screen stays; the later copy is dropped.
+    shown = regions ? [...shown, ...found] : mergeIncremental(shown, found).kept;
+    done += 1;
+    params.onSegment?.({
+      index: segment.index,
+      total: work.length,
+      done,
+      units: found.map((u) => toUnit(u.box, w, h, u.value.source, u.value.translation)),
+      truncated: answer.truncated,
+    });
   }
 
-  const kept = regions ? collected : mergeSegmentUnits(collected);
-  const units = kept.map((u) => toUnit(u.box, w, h, u.value.source, u.value.translation));
-  return replyFor(units, w, h, truncated, elapsed());
+  // Every segment that was asked for failed: nothing to show, so it is an error like a single-request failure.
+  if (work.length > 0 && failed.length === work.length) {
+    const first = failed[0]!;
+    return { error: { code: first.code, message: first.message } };
+  }
+
+  // Top to bottom, whatever order the segments came back in.
+  const ordered = [...shown].sort((a, b) => a.segment - b.segment);
+  const units = ordered.map((u) => toUnit(u.box, w, h, u.value.source, u.value.translation));
+  const reply = replyFor(units, w, h, truncated, elapsed());
+  if (failed.length > 0 && "result" in reply) reply.result.partial = { failed, total: segments.length };
+  return reply;
 }
 
 /** Detects, reads and translates one image with a vision model. Failures come back as `{ error }`. */

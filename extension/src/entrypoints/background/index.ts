@@ -11,7 +11,15 @@ import { arrayBufferToBase64DataUrl } from "@/lib/utils";
 import { dataUrlToBytes, pingBridge, probeBridge, translateViaBridge } from "@/lib/bridge/client";
 import { PriorityGate } from "@/lib/bridge/gate";
 import { installBridgeOriginRule } from "@/lib/bridge/origin";
-import type { BridgePingReply, BridgeTranslateMessage, BridgeTranslateReply } from "@/lib/bridge/protocol";
+import {
+  TASK_PORT_NAME,
+  type BridgePingReply,
+  type BridgeTaskStart,
+  type BridgeTranslateMessage,
+  type BridgeTranslateReply,
+  type TaskEvent,
+  type TaskPortRequest,
+} from "@/lib/bridge/protocol";
 import { DefaultConfig } from "@/lib/configs";
 import { CONTEXT_MENU_ITEMS, MENU_TRANSLATE_IMAGE, isContextTargetMessage, messageForMenuClick } from "@/lib/context-menu";
 import { translateDirect } from "@/lib/direct/client";
@@ -108,9 +116,17 @@ export default defineBackground(() => {
     await browser.runtime.openOptionsPage().catch(() => {});
   }
 
-  async function bridgeTranslate(msg: BridgeTranslateMessage, tabId: number | undefined): Promise<BridgeTranslateReply> {
-    const { src, referer, boxes, context, priority = 0 } = msg.data;
-    const controller = new AbortController();
+  /**
+   * One translation task. `emit` receives the task's events (stages, plan, segments): the page's task port passes
+   * a function that posts them; the old one-shot message passes nothing.
+   */
+  async function runTask(
+    data: BridgeTaskStart,
+    tabId: number | undefined,
+    controller: AbortController,
+    emit: (event: TaskEvent) => void,
+  ): Promise<BridgeTranslateReply> {
+    const { src, referer, boxes, context, priority = 0, focus, onlySegments } = data;
     const key = tabId ?? -1;
     if (!controllers.has(key)) controllers.set(key, new Set());
     controllers.get(key)!.add(controller);
@@ -121,6 +137,7 @@ export default defineBackground(() => {
     let perf: BgTimeline | null = null;
     const withPerf = (reply: BridgeTranslateReply): BridgeTranslateReply => (perf ? { ...reply, perf: perf.finish() } : reply);
     try {
+      emit({ type: "stage", stage: "queued" });
       const gateStart = performance.now();
       release = await gateFor(key).acquire(priority, controller.signal);
       const gateWait = performance.now() - gateStart;
@@ -149,6 +166,7 @@ export default defineBackground(() => {
         },
       );
       perf.addGateWait(gateWait);
+      emit({ type: "stage", stage: "translating" });
 
       if (kind === "direct") {
         const pattern = originPatternFor(settings.direct.baseUrl);
@@ -165,11 +183,23 @@ export default defineBackground(() => {
           context,
           boxes,
           signal: controller.signal,
+          focus,
+          onlySegments,
+          onProgress: (done, total) => emit({ type: "stage", stage: "translating", done, total }),
+          onSegment: (info) => {
+            timeline.addSegmentArrival(info.index);
+            emit({ type: "segment", index: info.index, total: info.total, done: info.done, units: info.units, truncated: info.truncated });
+          },
+          onSegmentFailed: (info) => {
+            (timeline.perf.failedSegments ??= []).push(info.index);
+            emit({ type: "segment-failed", index: info.index, total: info.total, code: info.error.code, message: info.error.message });
+          },
           trace: {
             plan: (info) => {
               timeline.perf.width = info.width;
               timeline.perf.height = info.height;
               timeline.perf.segments = info.segments;
+              emit({ type: "plan", width: info.width, height: info.height, segments: info.segments });
             },
             encode: (segment, ms) => timeline.addEncode(segment, ms),
             roundTrip: (entry) => timeline.addRoundTrip(entry),
@@ -200,6 +230,33 @@ export default defineBackground(() => {
       controllers.get(key)?.delete(controller);
     }
   }
+
+  /** The old one-shot message (the options page's tests use it): same task, no events. */
+  const bridgeTranslate = (msg: BridgeTranslateMessage, tabId: number | undefined): Promise<BridgeTranslateReply> =>
+    runTask(msg.data, tabId, new AbortController(), () => {});
+
+  // A page's translation task: one long-lived port. The page closing the port cancels the task.
+  browser.runtime.onConnect.addListener((port) => {
+    if (port.name !== TASK_PORT_NAME) return;
+    const controller = new AbortController();
+    port.onDisconnect.addListener(() => controller.abort());
+    let started = false;
+    const post = (message: TaskEvent) => {
+      try {
+        port.postMessage(message);
+      } catch {
+        // The page is gone.
+      }
+    };
+    port.onMessage.addListener((message: TaskPortRequest) => {
+      if (started || message?.type !== "start" || !message.data) return;
+      started = true;
+      const run = runTask(message.data, port.sender?.tab?.id, controller, post).then((reply) => {
+        post("error" in reply ? { type: "error", reply } : { type: "done", reply });
+      });
+      void keepAliveWhile(run);
+    });
+  });
 
   // Nothing to set up: look for the app at browser start and after an install or update, so the port is cached.
   browser.runtime.onStartup.addListener(() => void findBridge());

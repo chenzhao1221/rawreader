@@ -232,6 +232,15 @@ class Session {
     this.chrome = chrome;
     this.mock = mock;
     this.staticServer = staticServer;
+    /** Console messages and exceptions of the pages and the worker (printed with --verbose). */
+    this.logs = [];
+    chrome.listeners.push((msg) => {
+      if (msg.method === "Runtime.exceptionThrown") {
+        this.logs.push(`exception: ${msg.params.exceptionDetails?.exception?.description ?? msg.params.exceptionDetails?.text}`);
+      } else if (msg.method === "Runtime.consoleAPICalled" && ["error", "warning"].includes(msg.params.type)) {
+        this.logs.push(`${msg.params.type}: ${msg.params.args.map((a) => a.value ?? a.description ?? "").join(" ")}`);
+      }
+    });
   }
 
   /** Starts Chrome, loads the extension, and writes the mock-API settings into the throw-away profile. */
@@ -326,6 +335,7 @@ class Session {
   }
 
   async close() {
+    if (flag("verbose") && this.logs.length) console.log(`\nbrowser log:\n${this.logs.slice(-30).join("\n")}`);
     await this.chrome.stop();
   }
 }
@@ -343,6 +353,8 @@ const fmt = (n) => (n === null || n === undefined ? "-" : Math.round(n));
 const SCENARIO = {
   normal: { page: "normal.html", image: "img/page-1200x1700.png", point: { x: 640, y: 300 } },
   strip: { page: "strip.html", image: "img/strip-800x10000.png", point: { x: 640, y: 300 } },
+  // The same strip, read down to the third segment (rows 5652-8724): the click is at row 6500.
+  "strip-mid": { page: "strip.html", image: "img/strip-800x10000.png", point: { x: 640, y: 300 }, scroll: 6200 },
 };
 
 function imageUrl(base, scenario, tag) {
@@ -373,7 +385,7 @@ async function oneRun(session, base, scenario, tag, { scrollTo = 0 } = {}) {
 async function measureScenario(scenario, ctx) {
   const rows = {};
   const base = `http://127.0.0.1:${ctx.staticServer.port}`;
-  const scroll = scenario === "strip" ? 0 : 0;
+  const scroll = SCENARIO[scenario].scroll ?? 0;
   const samples = { cold: [], warm: [], cache: [] };
 
   if (CONDITIONS.includes("cold")) {
@@ -455,7 +467,7 @@ const STATE_JS = `(() => {
     : [];
   const overlays = [...document.querySelectorAll("lmt-overlay")].map((h) => {
     const own = h.parentElement && h.parentElement.querySelector(":scope > img, :scope > canvas");
-    return { imgId: own ? own.id : "", shown: !!(h.shadowRoot && h.shadowRoot.querySelector("img")) };
+    return { imgId: own ? own.id : "", shown: !!(h.shadowRoot && h.shadowRoot.querySelector("img")), mode: h.parentElement ? h.parentElement.getAttribute("data-lmt-mode") : "", note: h.parentElement ? h.parentElement.getAttribute("data-lmt-progress") : "" };
   });
   return { lines, overlays, trigger: !!document.querySelector("lmt-floating-trigger"), scrollY: Math.round(scrollY) };
 })()`;
@@ -567,6 +579,59 @@ async function runChecks(ctx) {
       check("same address twice: the first can be translated afterwards, each has its own overlay", !both.timedOut && ids === "first,second", ids);
       await session.closePage(page);
     }
+
+    // 5. Long strip: the first sentence comes long before the whole picture; read to the middle, that segment goes first.
+    {
+      const before = (await session.perfLog()).length;
+      const page = await session.openPage(`${base}/strip.html?v=check5`);
+      await sleep(300);
+      ctx.mock.control.count = 0;
+      await session.rightClickAndTranslate(page, SCENARIO.strip.point, `${base}/img/strip-800x10000.png?v=check5`);
+      const rec = await waitForRecord(session, before);
+      check("strip: the first sentence is painted well before the whole picture", rec.firstVisibleMs !== null && rec.doneMs !== null && rec.doneMs - rec.firstVisibleMs > 3000, `${rec.firstVisibleMs} ms / ${rec.doneMs} ms`);
+      check("strip: four segments, four requests, one decode", rec.bg?.segments === 4 && ctx.mock.control.count === 4, `requests ${ctx.mock.control.count}, decodes ${rec.bg?.decodeCount}`);
+      await session.closePage(page);
+
+      const before2 = (await session.perfLog()).length;
+      const mid = await session.openPage(`${base}/strip.html?v=check5b`);
+      await session.pageEval(mid, "window.scrollTo(0, 6200)");
+      await sleep(400);
+      await session.rightClickAndTranslate(mid, SCENARIO.strip.point, `${base}/img/strip-800x10000.png?v=check5b`);
+      const rec2 = await waitForRecord(session, before2);
+      const order = (rec2.bg?.segmentArrivals ?? []).map((a) => a.segment);
+      check("strip read to the middle: the segment around the click is read first", order[0] === 2, `arrival order ${order.join(",")}`);
+      check("strip read to the middle: first sentence at about one request time", rec2.firstVisibleMs !== null && rec2.firstVisibleMs < DELAY + 2500, `${rec2.firstVisibleMs} ms`);
+      await session.closePage(mid);
+    }
+
+    // 6. One segment fails twice: the other three stay, nothing is cached, only that segment is asked for again.
+    {
+      const before = (await session.perfLog()).length;
+      const page = await session.openPage(`${base}/strip.html?v=check6`);
+      await sleep(300);
+      ctx.mock.control.count = 0;
+      ctx.mock.control.failOn = new Set([2, 3]);
+      const cacheKeys = () => session.swEval(`chrome.storage.local.get(null).then((all) => Object.keys(all).filter((k) => k.startsWith("page-cache-")).length)`);
+      const cachedBefore = await cacheKeys();
+      await session.rightClickAndTranslate(page, SCENARIO.strip.point, `${base}/img/strip-800x10000.png?v=check6`);
+      const out = await watch(page, (s) => s.lines.some((l) => l.phase === "partial"), 90000);
+      const line = out.state.lines.find((l) => l.phase === "partial");
+      check("failed segment: the status line names it", !!line && /第 2 段失败/.test(line.text), line?.text ?? "none");
+      await sleep(800);
+      const shown = await session.pageEval(page, STATE_JS);
+      check("failed segment: the picture is shown with the other segments", shown.overlays.some((o) => o.shown));
+      check("failed segment: nothing is cached", (await cacheKeys()) === cachedBefore, String(await cacheKeys()));
+      const requestsAfterRun = ctx.mock.control.count;
+      ctx.mock.control.failOn = new Set();
+      await session.pageEval(page, `(() => { const bar = document.querySelector("lmt-task-status"); const b = [...bar.shadowRoot.querySelectorAll("button")].find((x) => x.textContent.trim() === "重试"); b && b.click(); return !!b; })()`);
+      const retried = await watch(page, (s) => s.lines.some((l) => l.phase === "done") || s.lines.length === 0, 60000);
+      await sleep(1200);
+      check("retry: only the failed segment is requested", ctx.mock.control.count - requestsAfterRun === 1, String(ctx.mock.control.count - requestsAfterRun));
+      check("retry: the picture is complete and now cached", !retried.timedOut && (await cacheKeys()) === cachedBefore + 1, String(await cacheKeys()));
+      const rec = (await session.perfLog()).slice(before).pop();
+      check("failed segment: the timing record says partial", rec?.outcome === "partial", rec?.outcome);
+      await session.closePage(page);
+    }
   } finally {
     await session.close();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -594,16 +659,21 @@ async function main() {
         await session.open();
         console.log(`extension loaded: ${session.extId}, mock API ${mock.baseUrl}`);
         const base = `http://127.0.0.1:${staticServer.port}`;
-        const page = await session.openPage(`${base}/normal.html`);
+        const spec = SCENARIO[SCENARIOS[0]] ?? SCENARIO.normal;
+        const page = await session.openPage(`${base}/${spec.page}`);
+        if (spec.scroll) await session.pageEval(page, `window.scrollTo(0, ${spec.scroll})`);
         await sleep(500);
         const started = Date.now();
-        await session.rightClickAndTranslate(page, SCENARIO.normal.point, `${base}/${SCENARIO.normal.image}`);
-        const state = () => session.pageEval(page, `(() => { const h = document.querySelector("lmt-overlay"); const i = h && h.shadowRoot && h.shadowRoot.querySelector("img"); return { host: !!h, img: !!i, trigger: !!document.querySelector("lmt-floating-trigger") }; })()`);
-        const result = await until(async () => {
-          const s = await state();
-          return s.img ? s : null;
-        }, 60000, "the translated picture", 250);
-        console.log(`translated picture shown after ${Date.now() - started} ms (wall clock)`, result, "mock requests:", mock.control.count);
+        await session.rightClickAndTranslate(page, spec.point, `${base}/${spec.image}`);
+        let last = "";
+        for (let i = 0; i < 160; i++) {
+          const s = await session.pageEval(page, STATE_JS);
+          const text = `${Date.now() - started} ms  lines=${JSON.stringify(s.lines.map((l) => l.text))} overlays=${JSON.stringify(s.overlays)} requests=${mock.control.count}`;
+          if (text.replace(/^\d+ ms /, "") !== last.replace(/^\d+ ms /, "")) console.log(text);
+          last = text;
+          if (s.overlays.some((o) => o.shown) && !s.lines.length) break;
+          await sleep(250);
+        }
       } finally {
         await session.close();
         fs.rmSync(dir, { recursive: true, force: true });

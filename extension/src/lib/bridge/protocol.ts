@@ -45,6 +45,15 @@ export interface BridgeTranslateResponse {
   timings: { detectMs: number; ocrMs: number; translateMs: number };
   /** Extension-side note for the user (direct API mode only), for example that the answer was cut short. */
   notice?: string;
+  /** Direct API on a long strip: some segments did not come back. The units of the other segments are all here. */
+  partial?: { failed: SegmentFailure[]; total: number };
+}
+
+/** One segment of a long strip that could not be translated (after its one retry). Zero-based. */
+export interface SegmentFailure {
+  segment: number;
+  code: string;
+  message: string;
 }
 
 export interface BridgePingResponse {
@@ -93,6 +102,47 @@ export interface BridgeTranslateMessage {
 export type BridgeTranslateReply =
   | { result: BridgeTranslateResponse; perf?: BgPerf }
   | { error: BridgeFailure; perf?: BgPerf };
+
+// ── Task port (page ↔ background) ──
+// A translation task runs over one long-lived port, so the background can report the stages and hand over each
+// segment of a long strip as soon as it is read. A page that disconnects cancels the task.
+
+export const TASK_PORT_NAME = "rawreader-task";
+
+/** Where the reader is looking, as fractions (0..1) of the picture height. */
+export interface BridgeFocus {
+  /** Where the user right-clicked. */
+  point?: number;
+  /** The part of the picture that is on screen. */
+  view?: { top: number; bottom: number };
+}
+
+export interface BridgeTaskStart {
+  src: string;
+  referer?: string;
+  boxes?: BridgeBox[];
+  context?: BridgeContext;
+  priority?: number;
+  focus?: BridgeFocus;
+  /** Only these segments (zero-based): a retry of the ones that failed. */
+  onlySegments?: number[];
+}
+
+/** Page to background on the task port. */
+export type TaskPortRequest = { type: "start"; data: BridgeTaskStart };
+
+/** Background to page on the task port. */
+export type TaskEvent =
+  /** `queued`: waiting for a request slot. `translating`: the first request is on its way. */
+  | { type: "stage"; stage: "queued" }
+  | { type: "stage"; stage: "translating"; done?: number; total?: number }
+  /** The strip was measured: how many segments there are. */
+  | { type: "plan"; width: number; height: number; segments: number }
+  /** One segment was read. `units` are in pixels of the whole picture. `done` counts the segments finished so far. */
+  | { type: "segment"; index: number; total: number; done: number; units: BridgeUnit[]; truncated?: boolean }
+  | { type: "segment-failed"; index: number; total: number; code: string; message: string }
+  | { type: "done"; reply: BridgeTranslateReply }
+  | { type: "error"; reply: BridgeTranslateReply };
 
 export interface BridgePingMessage {
   type: "BRIDGE_PING";

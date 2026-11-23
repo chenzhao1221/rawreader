@@ -123,3 +123,80 @@ export function markIdle(src: string, cacheKey?: string, owner?: Owner): void {
   else settleCacheKeys(src, owner, "pending", null);
   emit(src, cacheKey, owner, "idle");
 }
+
+// ── One request for a picture address that is shown twice ──
+// The two pictures are two tasks (own overlay, own status line), but the answer is the same, so the second one
+// joins the request that is already running instead of paying for it again. It is told everything the first one
+// was told. The request is cancelled only when every task that joined has gone.
+
+interface SharedEntry {
+  events: unknown[];
+  listeners: Set<(event: any) => void>;
+  controller: AbortController;
+  refs: number;
+  settled: boolean;
+  promise: Promise<any>;
+}
+
+const sharedCalls = new Map<string, SharedEntry>();
+
+export function joinSharedCall<E, R>(
+  key: string,
+  start: (emit: (event: E) => void, signal: AbortSignal) => Promise<R>,
+  options: { onEvent: (event: E) => void; signal?: AbortSignal | undefined; cancelled: R },
+): Promise<R> {
+  let entry = sharedCalls.get(key);
+  if (!entry) {
+    const created: SharedEntry = {
+      events: [],
+      listeners: new Set(),
+      controller: new AbortController(),
+      refs: 0,
+      settled: false,
+      promise: Promise.resolve(),
+    };
+    const emitAll = (event: E) => {
+      created.events.push(event);
+      for (const listener of [...created.listeners]) listener(event);
+    };
+    created.promise = start(emitAll, created.controller.signal).finally(() => {
+      created.settled = true;
+      if (sharedCalls.get(key) === created) sharedCalls.delete(key);
+    });
+    sharedCalls.set(key, created);
+    entry = created;
+  }
+  const joined = entry;
+  joined.refs += 1;
+  for (const event of joined.events) options.onEvent(event as E);
+  joined.listeners.add(options.onEvent as (event: unknown) => void);
+
+  let left = false;
+  const leave = () => {
+    if (left) return;
+    left = true;
+    joined.listeners.delete(options.onEvent as (event: unknown) => void);
+    joined.refs -= 1;
+    if (joined.refs <= 0 && !joined.settled) joined.controller.abort();
+  };
+  const gone = new Promise<R>((resolve) => {
+    if (options.signal?.aborted) {
+      leave();
+      resolve(options.cancelled);
+      return;
+    }
+    options.signal?.addEventListener(
+      "abort",
+      () => {
+        leave();
+        resolve(options.cancelled);
+      },
+      { once: true },
+    );
+  });
+  return Promise.race([joined.promise as Promise<R>, gone]).finally(() => {
+    // A normal finish: just drop this listener (the request is over, nothing to cancel).
+    left = true;
+    joined.listeners.delete(options.onEvent as (event: unknown) => void);
+  });
+}

@@ -5,12 +5,22 @@ import Sidebar from "@/lib/components/Sidebar.svelte";
 import TaskStatusBar from "@/lib/components/TaskStatusBar.svelte";
 import { AutoTranslateOrchestrator } from "./auto-translate";
 import * as Registry from "./translation-registry";
+import { joinSharedCall } from "./translation-registry";
 import { mount, unmount } from "svelte";
 import { ShadowRootContentScriptUi, storage } from "#imports";
 import { getSiteRule } from "@/lib/adapters";
 import { DefaultConfig, resolveLangGroup } from "@/lib/configs";
-import { BridgeMemo } from "@/lib/bridge/memo";
-import { contextToBridge } from "@/lib/bridge/client";
+import {
+  BridgeMemo,
+  responseToBboxes,
+  responseToTranslation,
+  runBridgeTask,
+  shouldWritePageCache,
+  type BridgeCall,
+  type CallHooks,
+  type PartialSnapshot,
+} from "@/lib/bridge/memo";
+import { contextToBridge, describeBridgeError } from "@/lib/bridge/client";
 import { browserImageCodec } from "@/lib/direct/image-browser";
 import { acquireImageDataUrl, dataUrlByteLength } from "@/lib/image-source";
 import { findImageForSrcUrl, matchRank } from "@/lib/image-match";
@@ -27,7 +37,7 @@ import type { TaskStatusEvent } from "@/lib/task-status";
 
 /** A status event without its task number (added when it is sent). */
 type StatusEventBody = TaskStatusEvent extends infer E ? (E extends { taskId: string } ? Omit<E, "taskId"> : never) : never;
-import type { BridgeBox, BridgeTranslateReply } from "@/lib/bridge/protocol";
+import type { BridgeFocus, BridgeTaskStart, BridgeTranslateReply, TaskEvent } from "@/lib/bridge/protocol";
 import { TaskTimeline, type BgPerf, type TaskOrigin } from "@/lib/perf/timeline";
 import { logDebugEntry, updateDebugEntry } from "./debug";
 import {
@@ -44,10 +54,7 @@ import {
   type MangaTargetElement,
 } from "./utils";
 import { getElementSrc, imageToDataUrl } from "@/lib/canvas";
-import {
-  isCleanResult,
-  seriesContextFromStored,
-} from "@/lib/series-context";
+import { seriesContextFromStored } from "@/lib/series-context";
 import {
   localHistoryKey,
   syncContextKey,
@@ -137,6 +144,10 @@ export default defineContentScript({
       started: boolean;
     }
     const taskCtx = new WeakMap<Element, TaskCtx>();
+    // The last right-click: where it landed and which picture it meant (see the right-click memory below).
+    let lastContext: ContextRecord | null = null;
+    // What can still be asked of a task that came back in part: ask again for the segments that failed.
+    const liveRuns = new WeakMap<Element, { retry: () => Promise<void> }>();
     let taskSeq = 0;
     let originHint: TaskOrigin | null = null;
     const manifestVersion = () => (browser.runtime.getManifest() as any).version_name || browser.runtime.getManifest().version;
@@ -284,6 +295,10 @@ export default defineContentScript({
       timeline.set("width", "naturalWidth" in imgElement ? imgElement.naturalWidth : imgElement.width);
       timeline.set("height", "naturalHeight" in imgElement ? imgElement.naturalHeight : imgElement.height);
       let bgPerf: BgPerf | undefined;
+      // The answer lacked some segments of a long strip (the picture is shown with the rest).
+      let hasFailures = false;
+      // Cancels the request when the overlay goes away.
+      const taskAbort = new AbortController();
       let timelineDone = false;
       const finishTask = (outcome: "done" | "partial" | "error" | "closed", error?: string) => {
         if (timelineDone) return;
@@ -370,24 +385,118 @@ export default defineContentScript({
           const r = imgElement.getBoundingClientRect();
           return -Math.abs(r.top + r.height / 2 - window.innerHeight / 2);
         };
-        const bridgeMemo = new BridgeMemo(async (boxes?: BridgeBox[]) => {
+        // Where the reader is looking, as fractions of the picture: the click (for a menu task) and the part on screen.
+        const computeFocus = (): BridgeFocus | undefined => {
+          const r = imgElement.getBoundingClientRect();
+          if (!(r.height > 0)) return undefined;
+          const frac = (y: number) => Math.max(0, Math.min(1, (y - r.top) / r.height));
+          const top = frac(0);
+          const bottom = frac(window.innerHeight);
+          const clicked = task.origin === "manual" && lastContext !== null && lastContext.resolved === imgElement;
+          return {
+            ...(clicked && lastContext ? { point: frac(lastContext.y) } : {}),
+            ...(bottom > top ? { view: { top, bottom } } : {}),
+          };
+        };
+        // What the task reports on its port goes to the status line, the timing marks and the memo.
+        const onTaskEvent = (event: TaskEvent, hooks?: CallHooks) => {
+          if (event.type === "stage") {
+            if (event.stage === "queued") emitStatus(task, { type: "queued" });
+            else
+              emitStatus(task, {
+                type: "translating",
+                ...(event.done !== undefined ? { done: event.done } : {}),
+                ...(event.total !== undefined ? { total: event.total } : {}),
+              });
+          } else if (event.type === "segment") {
+            timeline.mark("first-segment");
+            emitStatus(task, { type: "progress", done: event.done, total: event.total });
+          }
+          hooks?.onEvent?.(event);
+        };
+        const cancelled: BridgeTranslateReply = { error: { code: "timeout", message: "Cancelled" } };
+        const callBridge: BridgeCall = async (boxes, hooks) => {
           // Every way of getting the image failed: no point asking the backend; report the last step's reason.
           if (imageFailure !== null) return { error: { code: "image-unavailable", message: imageFailure } };
           timeline.mark("request-sent");
-          emitStatus(task, { type: "translating" });
-          const reply = (await browser.runtime.sendMessage({
-            type: "BRIDGE_TRANSLATE",
-            data: {
-              src,
-              referer: window.location.href,
-              boxes,
-              context: await loadBridgeContext(),
-              priority: viewportPriority(),
-            },
-          })) as BridgeTranslateReply | undefined;
+          const start: BridgeTaskStart = {
+            src,
+            referer: window.location.href,
+            boxes,
+            context: await loadBridgeContext(),
+            priority: viewportPriority(),
+            focus: computeFocus(),
+            onlySegments: hooks?.onlySegments,
+          };
+          const run = (emit: (event: TaskEvent) => void, signal: AbortSignal) =>
+            runBridgeTask((info) => browser.runtime.connect(info), start, { onEvent: emit, signal });
+          // The same picture address shown twice is read once: the second picture joins the request that is running.
+          const shareable = boxes === undefined && hooks?.onlySegments === undefined;
+          const reply = shareable
+            ? await joinSharedCall(Registry.srcKeyOf(originalSrc), run, {
+                onEvent: (event) => onTaskEvent(event, hooks),
+                signal: taskAbort.signal,
+                cancelled,
+              })
+            : await run((event) => onTaskEvent(event, hooks), taskAbort.signal);
           timeline.mark("result-received");
-          if (reply?.perf) bgPerf = reply.perf;
-          return reply ?? { error: { code: "unreachable", message: "No answer from the background worker" } };
+          if (reply.perf && !bgPerf) bgPerf = reply.perf;
+          return reply;
+        };
+        const bridgeMemo = new BridgeMemo(callBridge);
+        // Overlay-facing view of what has been read so far.
+        const toPartial = (snapshot: PartialSnapshot) => {
+          const reply = responseToTranslation(snapshot.response);
+          return {
+            bboxes: responseToBboxes(snapshot.response),
+            translations: reply.translations,
+            sourceTexts: reply.sourceTexts,
+            complete: snapshot.complete,
+            failedCount: snapshot.failed.length,
+          };
+        };
+
+        // A strip that was missing segments and has them all now: the page is complete, so it is cached like any other.
+        const commitCompletePage = async (finalBoxes: Bbox[], finalTranslations: Translations, finalSources: string[]) => {
+          const { seriesName, chapterId, pageIndex } = await getSiteRule();
+          const resolvedPage = resolveImagePageIndex(imgElement, originalSrc, pageIndex);
+          const items = await storage.getItems([syncContextKey(seriesName), localHistoryKey(seriesName)]);
+          const values = Object.fromEntries(items.map((i) => [i.key, i.value]));
+          const seriesContext = seriesContextFromStored(values[syncContextKey(seriesName)], values[localHistoryKey(seriesName)], seriesName);
+          const isContinuous =
+            seriesContext.lastChapterId === chapterId &&
+            seriesContext.lastPageIndex !== null &&
+            resolvedPage === seriesContext.lastPageIndex + 1;
+          const reply = responseToTranslation({
+            v: 1, hash: "", width: 0, height: 0, cached: false, timings: { detectMs: 0, ocrMs: 0, translateMs: 0 },
+            units: finalTranslations.map((translation, i) => ({
+              kind: "bubble" as const, bubbleOnly: false, drawBox: finalBoxes[i]!, ocrBox: finalBoxes[i]!, ocrText: finalSources[i] ?? "",
+              translation, status: translation ? ("ok" as const) : ("no-text" as const),
+            })),
+          });
+          if (!shouldWritePageCache(reply)) return;
+          storage
+            .setItem<PageCache>(`local:${await translationKey()}`, { bboxes: finalBoxes, translations: finalTranslations, sourceTexts: finalSources })
+            .catch((err) => console.warn("LMT: page-cache persist failed:", err));
+          updateSeriesContext(seriesName, chapterId, resolvedPage, finalTranslations, undefined, { resetHistory: !isContinuous, diagnostics: reply.diagnostics }).catch((err) =>
+            console.warn("LMT: series-context update failed:", err),
+          );
+        };
+
+        // The status bar's retry button on a strip that came back in part: ask for the missing segments only.
+        liveRuns.set(imgElement, {
+          retry: async () => {
+            if (bridgeMemo.failedSegments.length === 0) return;
+            emitStatus(task, { type: "retry" });
+            Registry.markPending(originalSrc, pendingCacheKey, imgElement);
+            const out = await bridgeMemo.retryFailed();
+            if (out.failed.length > 0) {
+              hasFailures = true;
+              Registry.markPartial(originalSrc, pendingCacheKey, imgElement);
+              emitStatus(task, { type: "partial", failed: out.failed.map((f) => f.segment), error: out.error ?? describeBridgeError(out.failed[0]!) });
+            }
+            // When nothing is missing any more the overlay finishes the picture and calls onSettled.
+          },
         });
 
         const translationKey = async () => {
@@ -551,6 +660,15 @@ export default defineContentScript({
                   // The app reads, translates and caches; the series context was sent with the request as prompt background.
                   const resp = await bridgeMemo.translate(bboxes, { rawText: opts?.rawText });
                   timeline.mark("translate-returned");
+                  if (!("error" in resp) && !opts?.transient) {
+                    // A long strip that came back in part: say which segments are missing; nothing is cached.
+                    const missing = resp.failedSegments ?? [];
+                    hasFailures = missing.length > 0;
+                    if (hasFailures) {
+                      emitStatus(task, { type: "partial", failed: missing.map((m) => m.segment), error: describeBridgeError(missing[0]!) });
+                      Registry.markPartial(originalSrc, pendingCacheKey, imgElement);
+                    }
+                  }
 
                   const duration = performance.now() - t0;
 
@@ -669,7 +787,7 @@ export default defineContentScript({
                   // context. A padded/echoed page keeps its debug entry (that
                   // is the whole point of the log) but must not poison the
                   // next prompt or resurrect echoed lines from cache.
-                  if (isCleanResult(diagnostics)) {
+                  if (shouldWritePageCache(resp)) {
                     const cacheKey = await translationKey();
                     storage
                       .setItem<PageCache>(`local:${cacheKey}`, {
@@ -692,14 +810,14 @@ export default defineContentScript({
                     ).catch((err) => console.warn("LMT: series-context update failed:", err));
                   } else {
                     console.warn(
-                      `LMT: ${diagnostics?.untranslated?.length ?? 0} untranslated box(es) on ${
+                      `LMT: ${diagnostics?.untranslated?.length ?? 0} untranslated box(es) and ${resp.failedSegments?.length ?? 0} missing segment(s) on ${
                         seriesName ? `"${seriesName}" ` : ""
                       }page ${resolvedPage}; cache/context not saved.`,
                     );
                   }
                   }
 
-                  return { translations: visibleTranslations, sourceTexts, context, gateSkip: undefined, gate: undefined, diagnostics };
+                  return { translations: visibleTranslations, sourceTexts, context, gateSkip: undefined, gate: undefined, diagnostics, ...(resp.failedSegments ? { failedSegments: resp.failedSegments } : {}) };
                 },
 
                 // Re-render translations on top of the (cached) inpainted base.
@@ -909,11 +1027,28 @@ export default defineContentScript({
                   inpaintedSrcCache.delete(src);
                 },
 
-                onPaint: () => {
+                onPaint: (kind: "partial" | "final") => {
                   timeline.mark("first-paint");
+                  if (kind === "partial") return;
                   timeline.mark("final-paint");
+                  if (hasFailures) {
+                    // Shown with what there is; the status line already names the missing segments.
+                    finishTask("partial", bridgeMemo.failedSegments[0]?.message);
+                  } else {
+                    emitStatus(task, { type: "done" });
+                    finishTask("done");
+                  }
+                },
+
+                subscribePartial: (listener: (snapshot: ReturnType<typeof toPartial>) => void) =>
+                  bridgeMemo.subscribe((snapshot) => listener(toPartial(snapshot))),
+
+                // The missing segments came back after a retry: the overlay drew the whole picture; now it is complete.
+                onSettled: async (settledBoxes: Bbox[], settledTranslations: Translations, settledSources: string[]) => {
+                  hasFailures = false;
+                  await commitCompletePage(settledBoxes, settledTranslations, settledSources);
+                  Registry.markDone(originalSrc, pendingCacheKey, imgElement);
                   emitStatus(task, { type: "done" });
-                  finishTask("done");
                 },
 
                 onClose: () => overlays.get(imgElement)?.ui?.remove(),
@@ -921,6 +1056,8 @@ export default defineContentScript({
             }),
 
           onRemove: (app) => {
+            taskAbort.abort();
+            liveRuns.delete(imgElement);
             finishTask("closed");
             document.dispatchEvent(new CustomEvent("lmt:task-status-event", { detail: { remove: true, taskId: task.id } }));
             if (app) unmount(app);
@@ -1009,7 +1146,6 @@ export default defineContentScript({
         return wrapper?.querySelector(":scope > img, :scope > canvas") ?? null;
       },
     };
-    let lastContext: ContextRecord | null = null;
     const noteRightClick = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       const resolved = resolveContextTarget(target, { x: event.clientX, y: event.clientY }, targetEnv);
@@ -1040,6 +1176,14 @@ export default defineContentScript({
         showNotice("这张图正在翻译");
         return;
       }
+      if (status === "partial" && src) {
+        // A menu click on a strip that is missing segments asks for those again.
+        const live = liveRuns.get(el);
+        if (live) {
+          void live.retry();
+          return;
+        }
+      }
       const task = beginTask(el, "manual", clickedAt);
       task.origin = "manual";
       autoTranslator.enqueueManual(el);
@@ -1050,6 +1194,13 @@ export default defineContentScript({
       const taskId = (event as CustomEvent<{ taskId?: string }>).detail?.taskId;
       const found = [...document.querySelectorAll<MangaTargetElement>("img, canvas")].find((el) => taskCtx.get(el)?.id === taskId);
       if (!found) return;
+      // Came back in part: ask for the segments that failed, keep everything that is shown.
+      const live = liveRuns.get(found);
+      const foundSrc = getElementSrc(found);
+      if (live && foundSrc && Registry.getStatus(foundSrc, found) === "partial") {
+        void live.retry();
+        return;
+      }
       overlays.get(found)?.ui?.remove();
       translateByHand(found, undefined);
     });
