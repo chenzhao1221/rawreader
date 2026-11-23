@@ -32,6 +32,18 @@ import { loadBackendSettings } from "@/lib/direct/settings";
 import { ImageDownloadError, proxyFetch, type ProxyFetchDeps, type SessionRuleApi } from "@/lib/image-proxy";
 import { BRIDGE_TRANSLATE_TIMEOUT_MS, INPAINT_TIMEOUT_MS, MAX_BRIDGE_REQUESTS_PER_TAB } from "@/lib/timeouts";
 import { appendPerfRecord, BgTimeline, PERF_LOG_KEY, type PerfRecord } from "@/lib/perf/timeline";
+import {
+  MSG_HISTORY_CLEAR,
+  MSG_HISTORY_REMOVE,
+  MSG_HISTORY_TOUCH,
+  READING_HISTORY_ENABLED_KEY,
+  READING_HISTORY_KEY,
+  SerialQueue,
+  parseHistory,
+  removeHistoryEntry,
+  touchHistory,
+  type HistoryTouch,
+} from "@/lib/reading-history";
 import { createAsyncResponder, keepAliveWhile, withTimeout } from "./messaging";
 import { ensureOffscreen } from "./utils";
 
@@ -44,6 +56,11 @@ export default defineBackground(() => {
   let workerTasks = 0;
   // Records are appended one after the other, so two tabs finishing together cannot overwrite each other.
   let perfWrites: Promise<unknown> = Promise.resolve();
+  // Reading history: every write (a page touching it, the popup deleting) goes through this queue, one at a time,
+  // so two tabs finishing together cannot overwrite each other. The history only ever lives in this extension's storage.
+  const historyWrites = new SerialQueue();
+  const readHistory = async () => parseHistory(await storage.getItem(READING_HISTORY_KEY));
+  const historyEnabled = async () => (await storage.getItem<boolean>(READING_HISTORY_ENABLED_KEY)) !== false;
   // Whether the "translate this image" entry is currently shown (it is created visible).
   let menuImageVisible = true;
   const savePerfRecord = (record: PerfRecord) => {
@@ -355,6 +372,40 @@ export default defineBackground(() => {
         browser.contextMenus.update(MENU_TRANSLATE_IMAGE, { visible: msg.hasTarget }, () => void browser.runtime.lastError);
       }
       return false;
+    }
+
+    // Reading history. A visit comes from a page (top frame, normal window only); deleting comes from the popup.
+    if (msg.type === MSG_HISTORY_TOUCH) {
+      const touch = msg.data as HistoryTouch | undefined;
+      const fromPage = sender.tab !== undefined;
+      // Not in a private window, not from a frame inside a page, and only when the history is switched on.
+      if (touch && typeof touch.url === "string" && fromPage && !sender.tab?.incognito && sender.frameId === 0) {
+        void historyWrites.run(async () => {
+          if (!(await historyEnabled())) return;
+          const current = await readHistory();
+          const next = touchHistory(current, touch);
+          if (next !== current) await storage.setItem(READING_HISTORY_KEY, next);
+        }).catch((error) => console.warn("RawReader: reading history write failed:", error));
+      }
+      return false;
+    }
+    if (msg.type === MSG_HISTORY_REMOVE && typeof msg.id === "string") {
+      keepAliveWhile(
+        historyWrites
+          .run(async () => storage.setItem(READING_HISTORY_KEY, removeHistoryEntry(await readHistory(), msg.id as string)))
+          .then(() => respond({ ok: true }))
+          .catch(respondErr),
+      );
+      return true;
+    }
+    if (msg.type === MSG_HISTORY_CLEAR) {
+      keepAliveWhile(
+        historyWrites
+          .run(async () => storage.setItem(READING_HISTORY_KEY, []))
+          .then(() => respond({ ok: true }))
+          .catch(respondErr),
+      );
+      return true;
     }
 
     // Timing record of one finished task (times and sizes only), written to the local ring log.

@@ -3,7 +3,9 @@
      RawReader changes: one pipeline (the app bridge). The mode switch, language pickers, detector, OCR and backend
      settings are gone; a connection status line and a link to the options page took their place. -->
 <script lang="ts">
-  import { Plug, Settings as SettingsIcon, CircleCheck, CircleAlert } from "lucide-svelte";
+  import { Plug, Settings as SettingsIcon, CircleCheck, CircleAlert, History as HistoryIcon } from "lucide-svelte";
+  import ReadingHistory from "@/lib/components/ReadingHistory.svelte";
+  import { READING_HISTORY_ENABLED_KEY } from "@/lib/reading-history";
   import { onDestroy, onMount } from "svelte";
   import { getSiteRule } from "@/lib/adapters";
   import { describeBackendStatus } from "@/lib/direct/status";
@@ -30,6 +32,13 @@
   });
 
   let showContextDrawer = $state(false);
+  // The reading history replaces the popup's content while it is open.
+  let showHistory = $state(false);
+  let historyEnabled = $state(true);
+  async function setHistoryEnabled(value: boolean) {
+    historyEnabled = value;
+    await storage.setItem(READING_HISTORY_ENABLED_KEY, value);
+  }
   let loadingSettings = $state(true);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let status = $state<{ kind: "checking" | "ok" | "warn" | "error"; text: string }>({ kind: "checking", text: "正在检查连接…" });
@@ -115,6 +124,7 @@
   onMount(() => {
     void loadAll();
     void checkConnection();
+    void storage.getItem<boolean>(READING_HISTORY_ENABLED_KEY).then((value) => (historyEnabled = value !== false));
   });
   onDestroy(saveNow);
 </script>
@@ -127,16 +137,29 @@
       <img src="/icon/48.png" alt="" class="w-6 h-6 rounded-md shrink-0 object-contain" />
       <span class="font-display font-semibold text-[13px] tracking-tight truncate">RawReader</span>
     </div>
-    <button
-      type="button"
-      onclick={() => browser.runtime.openOptionsPage()}
-      class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md cursor-pointer border border-[var(--border-line)] text-[var(--text-muted)] hover:text-[var(--accent-amber)]"
-    >
-      <SettingsIcon size={12} />
-      设置
-    </button>
+    <div class="flex items-center gap-1.5">
+      <button
+        type="button"
+        onclick={() => (showHistory = true)}
+        class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md cursor-pointer border border-[var(--border-line)] text-[var(--text-muted)] hover:text-[var(--accent-amber)]"
+      >
+        <HistoryIcon size={12} />
+        历史
+      </button>
+      <button
+        type="button"
+        onclick={() => browser.runtime.openOptionsPage()}
+        class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md cursor-pointer border border-[var(--border-line)] text-[var(--text-muted)] hover:text-[var(--accent-amber)]"
+      >
+        <SettingsIcon size={12} />
+        设置
+      </button>
+    </div>
   </header>
 
+  {#if showHistory}
+    <ReadingHistory onBack={() => (showHistory = false)} />
+  {:else}
   <div class="flex-1 overflow-y-auto custom-scrollbar p-3 flex flex-col gap-2.5 min-h-0">
     <!-- Connection -->
     <section class="panel-card !p-2 flex flex-col gap-1.5">
@@ -196,6 +219,19 @@
         <span class="text-[11px] text-[var(--text-muted)] leading-tight">
           {settings.skipBboxRefining ? "跳过文本框调整" : "先调整文本框"}
         </span>
+      </div>
+
+      <div class="col-span-2 panel-card !p-2 flex items-center justify-between gap-1.5">
+        <div class="flex flex-col">
+          <span class="text-xs font-medium">记录阅读历史</span>
+          <span class="text-[11px] text-[var(--text-muted)] leading-tight">
+            {historyEnabled ? "翻译过的页面记在本机，可在“历史”里查看" : "已关闭，已有记录不会删除"}
+          </span>
+        </div>
+        <label class="switch-cyber shrink-0">
+          <input type="checkbox" checked={historyEnabled} onchange={(e) => setHistoryEnabled(e.currentTarget.checked)} />
+          <span class="track"><span class="thumb"></span></span>
+        </label>
       </div>
 
       <div class="col-span-2 panel-card !p-2 flex items-center justify-between gap-1.5">
@@ -260,6 +296,8 @@
       {/if}
     </section>
   </div>
+
+  {/if}
 
   <footer class="px-3.5 py-2 border-t border-[var(--border-line)] shrink-0 flex items-center justify-between text-[11px] text-[var(--text-dim)] bg-[var(--bg-void)]">
     <span class="truncate">在漫画上点右键，选「翻译这张图片」</span>

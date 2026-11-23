@@ -670,6 +670,60 @@ async function runChecks(ctx) {
       check("queue: the strip is the manual one", strip?.origin === "manual", strip?.origin);
       await session.closePage(page);
     }
+
+    // 8. Reading history: a translation writes one entry, the popup lists, searches, opens, deletes and clears.
+    {
+      const readHistory = () => session.swEval(`chrome.storage.local.get("reading-history").then((r) => r["reading-history"] ?? [])`);
+      await session.swEval(`chrome.storage.local.remove("reading-history")`);
+      const translateOnce = async (url, srcPath) => {
+        const page = await session.openPage(url);
+        await sleep(300);
+        await session.rightClickAndTranslate(page, SCENARIO.normal.point, `${base}/${srcPath}`);
+        await watch(page, (s) => s.overlays.some((o) => o.shown));
+        await sleep(400);
+        await session.closePage(page);
+      };
+      await translateOnce(`${base}/normal.html?v=hist1&utm_source=newsletter#top`, "img/page-1200x1700.png?v=hist1");
+      let history = await readHistory();
+      check("history: a translation writes one entry", history.length === 1, String(history.length));
+      check("history: the address has no fragment and no tracking parameter, the title is kept", history[0]?.url === `${base}/normal.html?v=hist1` && /Sample Series/.test(history[0]?.title ?? ""), history[0]?.url);
+      check("history: only the planned fields are stored", Object.keys(history[0] ?? {}).sort().join(",") === "chapter,firstVisitedAt,id,lastVisitedAt,series,site,title,url,visits", Object.keys(history[0] ?? {}).sort().join(","));
+      await translateOnce(`${base}/strip.html?v=hist2`, "img/strip-800x10000.png?v=hist2");
+      history = await readHistory();
+      check("history: another page address is a second entry, newest first", history.length === 2 && /strip\.html/.test(history[0]?.url ?? ""), history.map((h) => h.url.split("/").pop()).join(" | "));
+
+      await session.swEval(`chrome.storage.local.set({ "reading-history-enabled": false })`);
+      await translateOnce(`${base}/normal.html?v=hist3`, "img/page-1200x1700.png?v=hist3");
+      check("history: the switch turns recording off and keeps what is there", (await readHistory()).length === 2);
+      await session.swEval(`chrome.storage.local.remove("reading-history-enabled")`);
+
+      // The popup.
+      const popup = await session.openPage(`chrome-extension://${session.extId}/popup.html`);
+      await sleep(600);
+      const click = (js) => session.pageEval(popup, js);
+      await click(`[...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "历史").click()`);
+      await until(async () => (await click(`document.querySelectorAll("[data-history-id]").length`)) === 2, 8000, "two history rows");
+      check("history popup: lists both pages", true);
+      const hasPermission = await session.swEval(`chrome.runtime.getManifest().permissions.includes("history")`);
+      check("history: the manifest has no history permission", hasPermission === false);
+      await click(`(() => { const i = document.querySelector("input[type=text]"); i.value = "STRIP"; i.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+      await until(async () => (await click(`document.querySelectorAll("[data-history-id]").length`)) === 1, 8000, "search to narrow the list");
+      check("history popup: search narrows the list without regard to case", true);
+      const targetsBefore = (await session.chrome.send("Target.getTargets")).targetInfos.length;
+      await click(`document.querySelector("[data-history-id] button").click()`);
+      const opened = await until(async () => {
+        const { targetInfos } = await session.chrome.send("Target.getTargets");
+        return targetInfos.length > targetsBefore && targetInfos.some((t) => /strip\.html\?v=hist2/.test(t.url)) ? true : null;
+      }, 8000, "the page to open in a new tab").catch(() => false);
+      check("history popup: a click opens the page in a new tab", opened === true);
+      await click(`document.querySelector('button[aria-label="删除这条记录"]').click()`);
+      await until(async () => (await readHistory()).length === 1, 8000, "one entry to be deleted");
+      check("history popup: delete removes one entry", (await readHistory())[0]?.url === `${base}/normal.html?v=hist1`);
+      await click(`window.confirm = () => true; [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "清空全部").click()`);
+      await until(async () => (await readHistory()).length === 0, 8000, "the history to be cleared");
+      check("history popup: clear removes everything", true);
+      await session.closePage(popup);
+    }
   } finally {
     await session.close();
     fs.rmSync(dir, { recursive: true, force: true });

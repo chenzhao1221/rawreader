@@ -82,6 +82,33 @@ The menu entry works on plain pictures, on pictures under a transparent page-fli
 
 If a request fails the extension shows a Chinese message with the reason: app not running (open RawReader first), request refused (not the official extension build), or models not ready.
 
+### Long strips (direct mode)
+
+A picture taller than twice its width is cut into overlapping segments (at most 3072 px on the long side each) and the segments are sent one after another. The picture is decoded once per task and every segment is cut from the same bitmap. The segment around the right-click goes first, then the ones on screen, then the rest, and **each segment is drawn as soon as it comes back**, so the part you are reading is readable long before the whole strip is done (when 直接翻译 is on or 自动翻译 runs; with the box-adjusting step on, the strip is shown when all of it has arrived, as before). A bubble that two neighbouring segments both read is shown once.
+
+A segment that fails twice does not throw the others away: the picture is shown with the rest, the status line says `第 N 段失败：原因` with a 重试 button, and only the failed segments are asked for again. A strip that is missing segments is **not** written to the page cache and does not feed the series context until it is complete.
+
+Order of work, at the page queue and at the per-tab request gate: your menu click, then pictures on screen, then pictures off screen. A running request is never interrupted; the next free place goes to the most urgent task. In direct mode a place is taken per segment, so a click waits for one segment at most, not for a whole strip.
+
+## Reading history
+
+The popup has a 历史 button. It lists the pages you translated: title, site, time, grouped 今天 / 昨天 / 更早, with a search box (title, address, site, series), a click to open a page in a new tab, a delete button per entry and 清空全部.
+
+- Stored: address (without `#` and tracking parameters), title, host name, series and chapter (only when a site rule gives them), first and last visit time, visit count. Never a picture, the original text or a translation.
+- Where: `chrome.storage.local` of this extension only (key `reading-history`, at most 1000 entries, the oldest go first). It is not synced, not uploaded, not read by anything else, and it does not use the browser's own history: the manifest has no `history` permission.
+- When: the first time a translation starts on a page address (menu, auto, 翻译本页图片), or after 10 seconds on a page that matches a site rule you wrote yourself. A single-page reader that changes address is recorded again for the new address. Pages of one chapter read within 30 minutes of each other (same site, series and chapter) share one entry that points to the newest page.
+- Not in private windows. The switch 记录阅读历史 in the popup turns it off (existing entries stay).
+
+## Measuring (development)
+
+`scripts/perf-headless.mjs` loads a build into a headless Chrome with a throw-away profile (`--headless=new`, DevTools pipe, no window, no extra dependency) and points the extension at `scripts/mock-vision-api.mjs`, a local stand-in for a vision API that answers after a fixed delay. It never contacts a real service and never touches your own Chrome profile.
+
+    npm run build                                   # or RAWREADER_OUT_DIR=<dir> npm run build to build elsewhere
+    node scripts/perf-headless.mjs --ext .output/chrome-mv3 --scenario normal,strip,strip-mid --samples 5 --out result.json
+    node scripts/perf-headless.mjs --ext .output/chrome-mv3 --check      # page checks: right-click targets, status line, failure and retry, queue order
+
+Every number it prints is a mock number (the API round trip is the mock's delay). The extension keeps its own timing records (times, sizes and task numbers only; no address, text or picture) in `local:perf-log`; the in-page settings sidebar (tab 系统, card 测速记录) exports them as JSON and clears them.
+
 ## Layout
 
 | Path | Content |
@@ -90,8 +117,10 @@ If a request fails the extension shows a Chinese message with the reason: app no
 | `src/entrypoints/content/` | Content script: finds images, draws the overlay, calls the background worker |
 | `src/entrypoints/popup/`, `options/` | Toolbar popup and the options page (connection state, text style, site rules) |
 | `src/entrypoints/offscreen/` | Canvas work for text cleaning |
-| `src/lib/bridge/` | Wire types, HTTP client, per-image memo, priority gate |
+| `src/lib/bridge/` | Wire types, HTTP client, per-image memo (segments arriving in pieces), task port client, priority gate |
 | `src/lib/direct/` | Direct API mode: presets, request builders, prompt, tolerant JSON parser, image shrinking, backend selection |
+| `src/lib/perf/`, `reading-history.ts`, `task-status.ts`, `context-target.ts` | Timing marks, reading history, status-line phases, which picture a right-click means (all pure logic) |
+| `scripts/`, `tests/fixtures/perf/` | Mock vision API, headless measurement and page checks, synthetic sample pages |
 | `tests/unit/` | Vitest unit tests |
 
 ## Licence

@@ -35,6 +35,7 @@ import {
   type TargetEnv,
 } from "@/lib/context-target";
 import type { TaskStatusEvent } from "@/lib/task-status";
+import { MSG_HISTORY_TOUCH } from "@/lib/reading-history";
 
 /** A status event without its task number (added when it is sent). */
 type StatusEventBody = TaskStatusEvent extends infer E ? (E extends { taskId: string } ? Omit<E, "taskId"> : never) : never;
@@ -186,6 +187,66 @@ export default defineContentScript({
       return task;
     };
 
+    // ── Reading history ──────────────────────────────────────────────────
+    // A page is remembered (title, address, series and chapter when a site rule gives them) when a translation starts on
+    // it, or when it matches a site rule the user wrote and stays open for 10 seconds. The background stores it, in this
+    // extension's own storage, and never in a private window. Nothing else about the page leaves it.
+    let historyUrl = "";
+    const touchHistoryNow = async () => {
+      try {
+        if (window.top !== window || !/^https?:$/.test(window.location.protocol)) return;
+        if (browser.extension.inIncognitoContext) return;
+        const site = await getSiteRule();
+        // The fallback rule guesses from the title; only a real rule gives a series and a chapter worth merging on.
+        const known = site.ruleId !== "fallback";
+        await browser.runtime.sendMessage({
+          type: MSG_HISTORY_TOUCH,
+          data: {
+            url: window.location.href,
+            title: document.title,
+            ...(known ? { series: site.seriesName, chapter: site.chapterId } : {}),
+          },
+        });
+      } catch {
+        // The history is a convenience: a failure here must never get in the way of translating.
+      }
+    };
+    /** A translation started: remember this address once (the background also ignores repeats within 5 seconds). */
+    const noteTranslationStarted = () => {
+      if (historyUrl === window.location.href) return;
+      historyUrl = window.location.href;
+      void touchHistoryNow();
+    };
+    let dwellTimer: ReturnType<typeof setTimeout> | undefined;
+    /** On a site the user wrote a rule for: remember the page after it stayed open for 10 seconds. */
+    const scheduleDwell = () => {
+      clearTimeout(dwellTimer);
+      const at = window.location.href;
+      dwellTimer = setTimeout(async () => {
+        if (window.location.href !== at || historyUrl === at) return;
+        const custom = (await storage.getItem<SiteRule[]>("sync:custom-site-rules").catch(() => null)) ?? [];
+        if (!Array.isArray(custom) || !custom.some((rule) => rule.domain && window.location.hostname.includes(rule.domain))) return;
+        historyUrl = at;
+        void touchHistoryNow();
+      }, 10_000);
+    };
+    // A reader that changes chapter or page without loading a new document: watch the address.
+    let seenHref = window.location.href;
+    const onAddressChange = () => {
+      if (window.location.href === seenHref) return;
+      seenHref = window.location.href;
+      historyUrl = "";
+      scheduleDwell();
+    };
+    const nav = (window as unknown as { navigation?: EventTarget }).navigation;
+    if (nav) nav.addEventListener("navigatesuccess", onAddressChange);
+    else {
+      const poll = setInterval(onAddressChange, 1000);
+      ctx.onInvalidated(() => clearInterval(poll));
+    }
+    scheduleDwell();
+    ctx.onInvalidated(() => clearTimeout(dwellTimer));
+
     // Mount independent sidebar shadow UI
     createShadowRootUi(ctx, {
       name: "lmt-sidebar",
@@ -212,14 +273,27 @@ export default defineContentScript({
       const originalSrc = (clicked && translatedSrcMap.get(clicked)) ?? rawSrc;
       if (!originalSrc) return;
 
+      // A picture that was queued has a status line saying "排队中"; every way out below that does not start it removes the line.
+      const abandonQueuedLine = () => {
+        const waiting = taskCtx.get(imgElement);
+        if (waiting && !waiting.started) {
+          document.dispatchEvent(new CustomEvent("lmt:task-status-event", { detail: { remove: true, taskId: waiting.id } }));
+          taskCtx.delete(imgElement);
+        }
+      };
+
       // ── Strict early registry guard (LMT-only, no page-world exposure) ──
-      if (Registry.isPending(originalSrc, imgElement)) return;
+      if (Registry.isPending(originalSrc, imgElement)) {
+        abandonQueuedLine();
+        return;
+      }
       if (Registry.getStatus(originalSrc, imgElement) === "done" && overlays.has(imgElement)) {
         const existingDone = overlays.get(imgElement)!;
         if (document.body.contains(existingDone.wrapper)) {
           existingDone.wrapper.dispatchEvent(
             new CustomEvent("lmt:back-to-refine"),
           );
+          abandonQueuedLine();
           return;
         }
         // Overlay was done but wrapper detached — clear stale done so cache-restore can run
@@ -238,6 +312,7 @@ export default defineContentScript({
           existing.wrapper.dispatchEvent(
             new CustomEvent("lmt:back-to-refine"),
           );
+          abandonQueuedLine();
           return;
         }
       }
@@ -247,11 +322,7 @@ export default defineContentScript({
       // at 0×0. Nothing is claimed yet, so a plain return is safe — the queue
       // releases the slot and rescan retries when the page is visible.
       if (!(await waitForLaidOutImage(imgElement))) {
-        const waiting = taskCtx.get(imgElement);
-        if (waiting && !waiting.started) {
-          document.dispatchEvent(new CustomEvent("lmt:task-status-event", { detail: { remove: true, taskId: waiting.id } }));
-          taskCtx.delete(imgElement);
-        }
+        abandonQueuedLine();
         return;
       }
 
@@ -266,6 +337,7 @@ export default defineContentScript({
         pendingCacheKey = await Registry.resolveCacheKey(imgElement, originalSrc);
         if (Registry.getStatusByCacheKey(pendingCacheKey, imgElement) === "pending") {
           Registry.markIdle(originalSrc, undefined, imgElement);
+          abandonQueuedLine();
           return;
         }
       } catch {
@@ -275,6 +347,9 @@ export default defineContentScript({
       // Attach the cacheKey to the pending claim (idempotent re-mark).
       // Mark pending BEFORE any heavy work / overlay creation so second call strict-blocks
       Registry.markPending(originalSrc, pendingCacheKey, imgElement);
+
+      // The first translation on this page address goes into the reading history.
+      noteTranslationStarted();
 
       // The task of this element: made when it was queued, or now for a picture that starts at once.
       const task = beginTask(imgElement, "auto");
