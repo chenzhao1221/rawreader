@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FetchLike } from "@/lib/bridge/client";
 import { translateDirect } from "@/lib/direct/client";
-import type { ImageCodec } from "@/lib/direct/image";
+import { codecFrom } from "./helpers/codec";
 import type { DirectApiSettings } from "@/lib/direct/providers";
 import {
   iou,
@@ -113,11 +113,11 @@ describe("duplicate removal", () => {
 
 describe("translateDirect on a long strip", () => {
   // 1000 x 5000 strip: segments start at 0 and 1928 (3072 px each, overlapping by 1144 px).
-  const strip: ImageCodec = {
+  const strip = codecFrom({
     measure: async () => ({ width: 1000, height: 5000 }),
     encodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
     cropEncodeJpeg: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 9])),
-  };
+  });
   const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
 
   it("sends one request per segment, maps the boxes back and drops the bubble both segments saw", async () => {

@@ -47,7 +47,24 @@ export interface CropRect {
   h: number;
 }
 
+/**
+ * A picture that was decoded once. Every crop and every encode draws from the same decoded pixels, so a long strip
+ * is decoded one time however many segments it is cut into. `close` frees the pixels; call it when the task ends,
+ * fails or is cancelled.
+ */
+export interface DecodedImage {
+  width: number;
+  height: number;
+  /** Draws the whole picture at `width` x `height` on a white background and encodes as JPEG. */
+  encodeJpeg(width: number, height: number, quality: number): Promise<Uint8Array>;
+  /** Takes the rectangle (pixels of the decoded picture), draws it at `width` x `height` and encodes as JPEG. */
+  cropEncodeJpeg(rect: CropRect, width: number, height: number, quality: number): Promise<Uint8Array>;
+  close(): void;
+}
+
 export interface ImageCodec {
+  /** Decodes the bytes once. Rejects when they are not an image the browser can decode. */
+  open(bytes: Uint8Array): Promise<DecodedImage>;
   /** Pixel size of the encoded image. Rejects when the bytes are not an image the browser can decode. */
   measure(bytes: Uint8Array): Promise<{ width: number; height: number }>;
   /** Decodes, draws at `width` x `height` on a white background and encodes as JPEG. */
@@ -87,10 +104,20 @@ export interface PrepareOptions {
  * Keeps the original bytes when they are a JPEG, PNG or WebP within the limits. Otherwise scales the image down
  * and re-encodes it as JPEG, trying smaller settings until it fits.
  */
-export async function prepareImage(bytes: Uint8Array, codec: ImageCodec, options: PrepareOptions = {}): Promise<PreparedImage> {
+export async function prepareImage(bytes: Uint8Array, source: ImageCodec | DecodedImage, options: PrepareOptions = {}): Promise<PreparedImage> {
+  // Given a codec, the picture is decoded here (and freed here); given a decoded picture, nothing is decoded again.
+  if ("open" in source) {
+    const image = await source.open(bytes);
+    try {
+      return await prepareImage(bytes, image, options);
+    } finally {
+      image.close();
+    }
+  }
+  const image = source;
   const maxSide = options.maxSide ?? MAX_SEND_SIDE;
   const maxBytes = options.maxBytes ?? MAX_SEND_BYTES;
-  const { width: originalWidth, height: originalHeight } = await codec.measure(bytes);
+  const { width: originalWidth, height: originalHeight } = image;
   const mime = sniffSendMime(bytes);
   const fitted = fitWithin(originalWidth, originalHeight, maxSide);
   const unchanged = fitted.width === originalWidth && fitted.height === originalHeight;
@@ -102,7 +129,7 @@ export async function prepareImage(bytes: Uint8Array, codec: ImageCodec, options
   for (const attempt of ENCODE_ATTEMPTS) {
     const width = Math.max(1, Math.round(fitted.width * attempt.scale));
     const height = Math.max(1, Math.round(fitted.height * attempt.scale));
-    const encoded = await codec.encodeJpeg(bytes, width, height, attempt.quality);
+    const encoded = await image.encodeJpeg(width, height, attempt.quality);
     if (encoded.length <= maxBytes) {
       return { mime: "image/jpeg", bytes: encoded, originalWidth, originalHeight, width, height, reencoded: true };
     }

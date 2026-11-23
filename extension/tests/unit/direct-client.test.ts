@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FetchLike } from "@/lib/bridge/client";
 import { testDirect, translateDirect } from "@/lib/direct/client";
-import type { ImageCodec } from "@/lib/direct/image";
+import { codecFrom } from "./helpers/codec";
 import type { DirectApiSettings } from "@/lib/direct/providers";
 
 const KEY = "sk-direct-test-key-9876";
@@ -25,11 +25,11 @@ const settingsZhipu: DirectApiSettings = {
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
 
 /** 800 x 1200 image that needs no re-encoding. */
-const codec: ImageCodec = {
+const codec = codecFrom({
   measure: async () => ({ width: 800, height: 1200 }),
   encodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
   cropEncodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
-};
+});
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -86,11 +86,11 @@ describe("translateDirect: success", () => {
   });
 
   it("downscales through the codec and still reports boxes in the original size", async () => {
-    const bigCodec: ImageCodec = {
+    const bigCodec = codecFrom({
       measure: async () => ({ width: 4000, height: 8000 }),
       encodeJpeg: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 1])),
       cropEncodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 1]),
-    };
+    });
     const fetchImpl = vi.fn<FetchLike>(async () => openai('{"items":[{"box":[0,0,500,250],"translation":"T"}]}'));
     const reply = await translateDirect(settingsZhipu, { ...base, codec: bigCodec, fetchImpl });
     expect(bigCodec.encodeJpeg).toHaveBeenCalledWith(JPEG, 1536, 3072, 0.9);
@@ -195,9 +195,9 @@ describe("translateDirect: failures", () => {
 
   it("reports an image that cannot be decoded or stays too large", async () => {
     const fetchImpl = vi.fn<FetchLike>();
-    const broken: ImageCodec = { measure: async () => { throw new Error("decode failed"); }, encodeJpeg: async () => JPEG, cropEncodeJpeg: async () => JPEG };
+    const broken = codecFrom({ measure: async () => { throw new Error("decode failed"); }, encodeJpeg: async () => JPEG, cropEncodeJpeg: async () => JPEG });
     expect(await translateDirect(settingsZhipu, { ...base, codec: broken, fetchImpl })).toMatchObject({ error: { code: "direct-image" } });
-    const huge: ImageCodec = { measure: async () => ({ width: 5000, height: 5000 }), encodeJpeg: async () => new Uint8Array(4_000_000), cropEncodeJpeg: async () => new Uint8Array(4_000_000) };
+    const huge = codecFrom({ measure: async () => ({ width: 5000, height: 5000 }), encodeJpeg: async () => new Uint8Array(4_000_000), cropEncodeJpeg: async () => new Uint8Array(4_000_000) });
     expect(await translateDirect(settingsZhipu, { ...base, codec: huge, fetchImpl })).toMatchObject({ error: { code: "direct-image-too-large" } });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -214,5 +214,81 @@ describe("testDirect", () => {
   it("reports the failure code", async () => {
     const result = await testDirect(settingsZhipu, { fetchImpl: async () => json({}, 401) });
     expect(result).toMatchObject({ error: { code: "direct-auth" } });
+  });
+});
+
+describe("translateDirect decodes the picture once", () => {
+  const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+  const encoded = new Uint8Array([0xff, 0xd8, 0xff, 9]);
+  /** 800 x 10000: four segments (tops 0, 2826, 5652, 6928). The counters are those of `open` and `close`. */
+  const strip = () => {
+    const crops: number[] = [];
+    const codec = codecFrom({
+      measure: async () => ({ width: 800, height: 10000 }),
+      encodeJpeg: async () => encoded,
+      cropEncodeJpeg: async (_bytes, rect) => {
+        crops.push(rect.y);
+        return encoded;
+      },
+    });
+    return { codec, crops };
+  };
+  const answerFor = (text = "T") => openai(JSON.stringify({ items: [{ box: [100, 100, 900, 200], translation: text }] }));
+
+  it("opens a four-segment strip once and closes it once", async () => {
+    const { codec, crops } = strip();
+    const fetchImpl = vi.fn<FetchLike>(async () => answerFor());
+    const reply = await translateDirect(settingsZhipu, { bytes: JPEG_BYTES, codec, targetLang: "zh", fetchImpl });
+    expect("result" in reply).toBe(true);
+    expect(crops).toHaveLength(4);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(codec.opened).toBe(1);
+    expect(codec.closed).toBe(1);
+  });
+
+  it("opens a normal page once, with or without re-encoding", async () => {
+    const small = codecFrom({ measure: async () => ({ width: 800, height: 1200 }), encodeJpeg: async () => encoded, cropEncodeJpeg: async () => encoded });
+    await translateDirect(settingsZhipu, { bytes: JPEG_BYTES, codec: small, targetLang: "zh", fetchImpl: async () => answerFor() });
+    expect([small.opened, small.closed]).toEqual([1, 1]);
+    const big = codecFrom({ measure: async () => ({ width: 4000, height: 6000 }), encodeJpeg: async () => encoded, cropEncodeJpeg: async () => encoded });
+    await translateDirect(settingsZhipu, { bytes: JPEG_BYTES, codec: big, targetLang: "zh", fetchImpl: async () => answerFor() });
+    expect([big.opened, big.closed]).toEqual([1, 1]);
+  });
+
+  it("closes the picture when the task is cancelled half way", async () => {
+    const { codec } = strip();
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<FetchLike>(async () => {
+      controller.abort();
+      throw new DOMException("a", "AbortError");
+    });
+    const reply = await translateDirect(settingsZhipu, { bytes: JPEG_BYTES, codec, targetLang: "zh", fetchImpl, signal: controller.signal });
+    expect(reply).toMatchObject({ error: { code: "timeout" } });
+    expect([codec.opened, codec.closed]).toEqual([1, 1]);
+  });
+
+  it("closes the picture when the request fails for good", async () => {
+    const { codec } = strip();
+    await translateDirect(settingsZhipu, { bytes: JPEG_BYTES, codec, targetLang: "zh", fetchImpl: async () => json({}, 401) });
+    expect([codec.opened, codec.closed]).toEqual([1, 1]);
+  });
+
+  it("does not open or close anything it could not decode", async () => {
+    const broken = codecFrom({ measure: async () => { throw new Error("nope"); }, encodeJpeg: async () => encoded, cropEncodeJpeg: async () => encoded });
+    await translateDirect(settingsZhipu, { bytes: JPEG_BYTES, codec: broken, targetLang: "zh", fetchImpl: vi.fn<FetchLike>() });
+    expect(broken.closed).toBe(0);
+  });
+
+  it("with user regions in one segment only: one crop, one request, the other segments are not encoded", async () => {
+    const { codec, crops } = strip();
+    const fetchImpl = vi.fn<FetchLike>(async () => openai('{"items":[{"box":[0,0,1000,1000],"translation":"甲"}]}'));
+    // Centre at row 3750: segment 1 (rows 2826-5898), not segment 0 (rows 0-3072).
+    const boxes = [{ x1: 100, y1: 3500, x2: 500, y2: 4000, confidence: 1 }];
+    const reply = await translateDirect(settingsZhipu, { bytes: JPEG_BYTES, codec, targetLang: "zh", fetchImpl, boxes });
+    expect(crops).toEqual([2826]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(codec.opened).toBe(1);
+    if (!("result" in reply)) throw new Error("expected a result");
+    expect(reply.result.units.map((u) => [u.drawBox.y1, u.drawBox.y2, u.translation])).toEqual([[3500, 4000, "甲"]]);
   });
 });

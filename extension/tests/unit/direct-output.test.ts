@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FetchLike } from "@/lib/bridge/client";
 import { FALLBACK_MAX_TOKENS, outputLimitsFor, translateDirect, TRUNCATED_NOTICE } from "@/lib/direct/client";
-import type { ImageCodec } from "@/lib/direct/image";
+import { codecFrom } from "./helpers/codec";
 import { looksTruncated } from "@/lib/direct/parse";
 import type { DirectApiSettings } from "@/lib/direct/providers";
 import {
@@ -14,11 +14,11 @@ import {
 
 const KEY = "sk-output-test-key-5555";
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
-const codec: ImageCodec = {
+const codec = codecFrom({
   measure: async () => ({ width: 800, height: 1200 }),
   encodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
   cropEncodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
-};
+});
 
 const settings = (over: Partial<DirectApiSettings> = {}): DirectApiSettings => ({
   provider: "zhipu",

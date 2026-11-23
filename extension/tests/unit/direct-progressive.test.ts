@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FetchLike } from "@/lib/bridge/client";
 import { translateDirect } from "@/lib/direct/client";
-import type { ImageCodec } from "@/lib/direct/image";
+import { codecFrom } from "./helpers/codec";
 import type { DirectApiSettings } from "@/lib/direct/providers";
 import { mergeIncremental, orderSegments, planSegments } from "@/lib/direct/tiles";
 
@@ -24,14 +24,14 @@ const bubble = (tag: string, box: [number, number, number, number] = [100, 100, 
 /** 800 x 10000 strip: four segments (tops 0, 2826, 5652, 6928) of 3072 px. */
 const stripCodec = () => {
   const crops: number[] = [];
-  const codec: ImageCodec = {
+  const codec = codecFrom({
     measure: async () => ({ width: 800, height: 10000 }),
     encodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
     cropEncodeJpeg: vi.fn(async (_bytes, rect) => {
       crops.push(rect.y);
       return new Uint8Array([0xff, 0xd8, 0xff, 9]);
     }),
-  };
+  });
   return { codec, crops };
 };
 const base = { bytes: JPEG, targetLang: "zh" };
@@ -158,11 +158,12 @@ describe("a segment that fails does not take the others with it", () => {
 
 describe("a bubble that two neighbouring segments both read is shown once", () => {
   // 1000 x 5000: segments at 0 and 1928, both 3072 tall. Rows 2000-2500 lie in both.
-  const strip = (): ImageCodec => ({
-    measure: async () => ({ width: 1000, height: 5000 }),
-    encodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
-    cropEncodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
-  });
+  const strip = () =>
+    codecFrom({
+      measure: async () => ({ width: 1000, height: 5000 }),
+      encodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
+      cropEncodeJpeg: async () => new Uint8Array([0xff, 0xd8, 0xff, 9]),
+    });
   const shared0 = answer([{ box: [0, 651, 1000, 814], translation: "from segment 0" }]);
   const shared1 = answer([{ box: [0, 23, 1000, 186], translation: "from segment 1" }]);
 

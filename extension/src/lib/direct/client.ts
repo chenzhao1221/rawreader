@@ -4,7 +4,7 @@
 import { bytesToBase64, type FetchLike } from "../bridge/client";
 import type { BridgeBox, BridgeContext, BridgeTranslateReply, BridgeUnit, SegmentFailure } from "../bridge/protocol";
 import { codeForStatus, scrubMessage, type DirectFailure } from "./errors";
-import { ImageTooLargeError, MAX_SEND_BYTES, MAX_SEND_SIDE, prepareImage, type ImageCodec } from "./image";
+import { ImageTooLargeError, MAX_SEND_BYTES, MAX_SEND_SIDE, prepareImage, type DecodedImage, type ImageCodec } from "./image";
 import { looksTruncated, parseModelOutput } from "./parse";
 import { buildPrompt, TEST_PROMPT, type NormBox } from "./prompt";
 import { apiStyleOf, type DirectApiSettings } from "./providers";
@@ -242,12 +242,13 @@ function replyFor(units: BridgeUnit[], width: number, height: number, truncated:
 async function translateWhole(
   settings: DirectApiSettings,
   params: DirectTranslateParams,
+  image: DecodedImage,
   elapsed: () => number,
 ): Promise<BridgeTranslateReply> {
   let prepared;
   const encodeStart = performance.now();
   try {
-    prepared = await prepareImage(params.bytes, params.codec);
+    prepared = await prepareImage(params.bytes, image);
   } catch (error) {
     return { error: imageFailure(error, settings) };
   }
@@ -274,10 +275,9 @@ async function translateWhole(
 }
 
 /** Encodes one segment of a strip, lowering the quality until it fits the size limit. */
-async function cropSegment(codec: ImageCodec, bytes: Uint8Array, segment: Segment, width: number): Promise<Uint8Array> {
+async function cropSegment(image: DecodedImage, segment: Segment, width: number): Promise<Uint8Array> {
   for (const quality of SEGMENT_QUALITIES) {
-    const encoded = await codec.cropEncodeJpeg(
-      bytes,
+    const encoded = await image.cropEncodeJpeg(
       { x: 0, y: segment.top, w: width, h: segment.height },
       segment.sendWidth,
       segment.sendHeight,
@@ -303,10 +303,10 @@ const failureOf = (segment: number, error: DirectFailure): SegmentFailure => ({ 
 async function translateStrip(
   settings: DirectApiSettings,
   params: DirectTranslateParams,
-  size: { width: number; height: number },
+  image: DecodedImage,
   elapsed: () => number,
 ): Promise<BridgeTranslateReply> {
-  const { width: w, height: h } = size;
+  const { width: w, height: h } = image;
   const segments = planSegments(w, h, MAX_SEND_SIDE);
   params.trace?.plan?.({ width: w, height: h, segments: segments.length });
   const regions = params.boxes?.length ? regionsOf(params.boxes, w, h) : undefined;
@@ -331,7 +331,7 @@ async function translateStrip(
     let segBytes: Uint8Array;
     const encodeStart = performance.now();
     try {
-      segBytes = await cropSegment(params.codec, params.bytes, segment, w);
+      segBytes = await cropSegment(image, segment, w);
     } catch (error) {
       return { error: imageFailure(error, settings) };
     }
@@ -345,11 +345,11 @@ async function translateStrip(
       context: params.context,
       regions: segRegions,
     });
-    const image = { mime: "image/jpeg", base64: bytesToBase64(segBytes) };
+    const picture = { mime: "image/jpeg", base64: bytesToBase64(segBytes) };
 
     // A failed segment is retried once. A cancelled request is not retried.
-    let answer = await callApi(settings, prompt, image, params, { segment: segment.index, attempt: 1 });
-    if ("error" in answer && !params.signal?.aborted) answer = await callApi(settings, prompt, image, params, { segment: segment.index, attempt: 2 });
+    let answer = await callApi(settings, prompt, picture, params, { segment: segment.index, attempt: 1 });
+    if ("error" in answer && !params.signal?.aborted) answer = await callApi(settings, prompt, picture, params, { segment: segment.index, attempt: 2 });
     if ("error" in answer) {
       if (FATAL_CODES.has(answer.error.code)) return { error: answer.error };
       const failure = failureOf(segment.index, answer.error);
@@ -411,14 +411,19 @@ export async function translateDirect(settings: DirectApiSettings, params: Direc
   const started = now();
   const elapsed = () => Math.round(now() - started);
 
-  let size: { width: number; height: number };
+  // The picture is decoded once and released when the task ends, fails or is cancelled.
+  let image: DecodedImage;
   try {
-    size = await params.codec.measure(params.bytes);
+    image = await params.codec.open(params.bytes);
   } catch (error) {
     return { error: imageFailure(error, settings) };
   }
-  if (shouldTile(size.width, size.height)) return translateStrip(settings, params, size, elapsed);
-  return translateWhole(settings, params, elapsed);
+  try {
+    if (shouldTile(image.width, image.height)) return await translateStrip(settings, params, image, elapsed);
+    return await translateWhole(settings, params, image, elapsed);
+  } finally {
+    image.close();
+  }
 }
 
 /** "Test connection": a text-only request, so it costs almost nothing. */

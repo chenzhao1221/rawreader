@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { codecFrom } from "./helpers/codec";
 import {
   ENCODE_ATTEMPTS,
   ImageTooLargeError,
@@ -6,7 +7,6 @@ import {
   fitWithin,
   prepareImage,
   sniffSendMime,
-  type ImageCodec,
 } from "@/lib/direct/image";
 
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0]);
@@ -32,13 +32,13 @@ describe("fitWithin", () => {
   });
 });
 
-const fakeCodec = (size: { width: number; height: number }, encodedSizes: number[]): ImageCodec & { encodeJpeg: ReturnType<typeof vi.fn> } => {
+const fakeCodec = (size: { width: number; height: number }, encodedSizes: number[]) => {
   let call = 0;
-  return {
+  return codecFrom({
     measure: async () => size,
     encodeJpeg: vi.fn(async () => new Uint8Array(encodedSizes[Math.min(call++, encodedSizes.length - 1)]!)),
     cropEncodeJpeg: async () => new Uint8Array(0),
-  };
+  });
 };
 
 describe("prepareImage", () => {

@@ -361,12 +361,14 @@ function imageUrl(base, scenario, tag) {
   return `${base}/${SCENARIO[scenario].image}?v=${tag}`;
 }
 
-async function waitForRecord(session, before, timeoutMs = 90000) {
+/** The first record after the first `before` ones that `pick` accepts (default: any). */
+async function waitForRecord(session, before, timeoutMs = 90000, pick = () => true) {
   return until(async () => {
     const log = await session.perfLog();
-    return log.length > before ? log[log.length - 1] : null;
+    return log.slice(before).find(pick) ?? null;
   }, timeoutMs, "a timing record", 250);
 }
+const isStrip = (record) => record.height === 10000;
 
 async function oneRun(session, base, scenario, tag, { scrollTo = 0 } = {}) {
   const spec = SCENARIO[scenario];
@@ -582,14 +584,15 @@ async function runChecks(ctx) {
 
     // 5. Long strip: the first sentence comes long before the whole picture; read to the middle, that segment goes first.
     {
+      await sleep(1500); // records of the earlier pages are written a moment after they finish
       const before = (await session.perfLog()).length;
       const page = await session.openPage(`${base}/strip.html?v=check5`);
       await sleep(300);
       ctx.mock.control.count = 0;
       await session.rightClickAndTranslate(page, SCENARIO.strip.point, `${base}/img/strip-800x10000.png?v=check5`);
-      const rec = await waitForRecord(session, before);
+      const rec = await waitForRecord(session, before, 90000, isStrip);
       check("strip: the first sentence is painted well before the whole picture", rec.firstVisibleMs !== null && rec.doneMs !== null && rec.doneMs - rec.firstVisibleMs > 3000, `${rec.firstVisibleMs} ms / ${rec.doneMs} ms`);
-      check("strip: four segments, four requests, one decode", rec.bg?.segments === 4 && ctx.mock.control.count === 4, `requests ${ctx.mock.control.count}, decodes ${rec.bg?.decodeCount}`);
+      check("strip: four segments, four requests, the picture decoded once", rec.bg?.segments === 4 && ctx.mock.control.count === 4 && rec.bg?.decodeCount === 1, `requests ${ctx.mock.control.count}, decodes ${rec.bg?.decodeCount}`);
       await session.closePage(page);
 
       const before2 = (await session.perfLog()).length;
@@ -597,7 +600,7 @@ async function runChecks(ctx) {
       await session.pageEval(mid, "window.scrollTo(0, 6200)");
       await sleep(400);
       await session.rightClickAndTranslate(mid, SCENARIO.strip.point, `${base}/img/strip-800x10000.png?v=check5b`);
-      const rec2 = await waitForRecord(session, before2);
+      const rec2 = await waitForRecord(session, before2, 90000, isStrip);
       const order = (rec2.bg?.segmentArrivals ?? []).map((a) => a.segment);
       check("strip read to the middle: the segment around the click is read first", order[0] === 2, `arrival order ${order.join(",")}`);
       check("strip read to the middle: first sentence at about one request time", rec2.firstVisibleMs !== null && rec2.firstVisibleMs < DELAY + 2500, `${rec2.firstVisibleMs} ms`);
@@ -628,7 +631,7 @@ async function runChecks(ctx) {
       await sleep(1200);
       check("retry: only the failed segment is requested", ctx.mock.control.count - requestsAfterRun === 1, String(ctx.mock.control.count - requestsAfterRun));
       check("retry: the picture is complete and now cached", !retried.timedOut && (await cacheKeys()) === cachedBefore + 1, String(await cacheKeys()));
-      const rec = (await session.perfLog()).slice(before).pop();
+      const rec = (await session.perfLog()).slice(before).filter(isStrip).pop();
       check("failed segment: the timing record says partial", rec?.outcome === "partial", rec?.outcome);
       await session.closePage(page);
     }
