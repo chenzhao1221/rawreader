@@ -44,6 +44,25 @@ export interface DirectDeps {
   fetchImpl?: FetchLike | undefined;
   signal?: AbortSignal | undefined;
   timeoutMs?: number | undefined;
+  /** Measurement hooks (timings only). Never receives text or addresses. */
+  trace?: DirectTrace | undefined;
+}
+
+/** Measurement hooks of one direct translation. All times are milliseconds. */
+export interface DirectTrace {
+  plan?(info: { width: number; height: number; segments: number }): void;
+  /** Cropping and encoding the JPEG of a segment. */
+  encode?(segment: number, ms: number): void;
+  /** One request: sent until the answer text was read, and the time spent reading the JSON body. */
+  roundTrip?(entry: { segment: number; ms: number; parseMs: number; attempt: number; ok: boolean }): void;
+  /** Turning the model's answer into boxes. */
+  parse?(segment: number, ms: number): void;
+}
+
+/** Which segment and which attempt a request belongs to (for the measurements only). */
+interface RequestMeta {
+  segment: number;
+  attempt: number;
 }
 
 export interface DirectTranslateParams extends DirectDeps {
@@ -72,6 +91,7 @@ async function sendOnce(
   image: ApiImage | null,
   deps: DirectDeps,
   maxTokens: number | undefined,
+  meta: RequestMeta = { segment: 0, attempt: 1 },
 ): Promise<Attempt> {
   const built = buildRequest(settings, prompt, image, maxTokens);
   if (!built.ok) return { ok: false, error: { code: "direct-config", message: built.reason }, refusedLimit: false };
@@ -80,6 +100,7 @@ async function sendOnce(
   const signals = [AbortSignal.timeout(deps.timeoutMs ?? DIRECT_TIMEOUT_MS)];
   if (deps.signal) signals.push(deps.signal);
 
+  const sentAt = performance.now();
   let res: Response;
   try {
     res = await doFetch(request.url, {
@@ -90,6 +111,7 @@ async function sendOnce(
       signal: AbortSignal.any(signals),
     });
   } catch (error) {
+    deps.trace?.roundTrip?.({ ...meta, ms: performance.now() - sentAt, parseMs: 0, ok: false });
     if (deps.signal?.aborted) return { ok: false, error: { code: "timeout", message: "Cancelled" }, refusedLimit: false };
     const name = (error as { name?: string } | null)?.name;
     if (name === "TimeoutError" || name === "AbortError") {
@@ -104,12 +126,14 @@ async function sendOnce(
   } catch {
     // An unreadable body is treated like an empty one.
   }
+  const readAt = performance.now();
   let body: unknown;
   try {
     body = JSON.parse(text);
   } catch {
     body = undefined;
   }
+  deps.trace?.roundTrip?.({ ...meta, ms: readAt - sentAt, parseMs: performance.now() - readAt, ok: res.ok });
 
   if (!res.ok) {
     const detail = extractErrorText(body) || text;
@@ -137,10 +161,16 @@ export function outputLimitsFor(settings: DirectApiSettings): (number | undefine
 }
 
 /** Sends one request, stepping down the output limit when the service refuses it. Never throws. */
-async function callApi(settings: DirectApiSettings, prompt: string, image: ApiImage | null, deps: DirectDeps): Promise<Answer | { error: DirectFailure }> {
+async function callApi(
+  settings: DirectApiSettings,
+  prompt: string,
+  image: ApiImage | null,
+  deps: DirectDeps,
+  meta: RequestMeta = { segment: 0, attempt: 1 },
+): Promise<Answer | { error: DirectFailure }> {
   const limits = outputLimitsFor(settings);
   for (let i = 0; ; i++) {
-    const attempt = await sendOnce(settings, prompt, image, deps, limits[i]);
+    const attempt = await sendOnce(settings, prompt, image, deps, limits[i], meta);
     if (attempt.ok) return attempt.answer;
     const hasNext = i + 1 < limits.length;
     if (!attempt.refusedLimit || !hasNext) return { error: attempt.error };
@@ -203,11 +233,14 @@ async function translateWhole(
   elapsed: () => number,
 ): Promise<BridgeTranslateReply> {
   let prepared;
+  const encodeStart = performance.now();
   try {
     prepared = await prepareImage(params.bytes, params.codec);
   } catch (error) {
     return { error: imageFailure(error, settings) };
   }
+  params.trace?.encode?.(0, performance.now() - encodeStart);
+  params.trace?.plan?.({ width: prepared.originalWidth, height: prepared.originalHeight, segments: 1 });
   const { originalWidth: w, originalHeight: h } = prepared;
   const regions = params.boxes?.length ? regionsOf(params.boxes, w, h) : undefined;
 
@@ -221,7 +254,9 @@ async function translateWhole(
   const answer = await callApi(settings, prompt, { mime: prepared.mime, base64: bytesToBase64(prepared.bytes) }, params);
   if ("error" in answer) return { error: answer.error };
 
+  const parseStart = performance.now();
   const parsed = parseModelOutput(answer.text, { width: prepared.width, height: prepared.height, regions });
+  params.trace?.parse?.(0, performance.now() - parseStart);
   const units = parsed.units.map((u) => toUnit(u.box, w, h, u.source, u.translation));
   return replyFor(units, w, h, answer.truncated, elapsed());
 }
@@ -250,17 +285,20 @@ async function translateStrip(
 ): Promise<BridgeTranslateReply> {
   const { width: w, height: h } = size;
   const segments = planSegments(w, h, MAX_SEND_SIDE);
+  params.trace?.plan?.({ width: w, height: h, segments: segments.length });
   const regions = params.boxes?.length ? regionsOf(params.boxes, w, h) : undefined;
   const collected: SegmentUnit<{ source: string; translation: string }>[] = [];
   let truncated = false;
 
   for (const segment of segments) {
     let segBytes: Uint8Array;
+    const encodeStart = performance.now();
     try {
       segBytes = await cropSegment(params.codec, params.bytes, segment, w);
     } catch (error) {
       return { error: imageFailure(error, settings) };
     }
+    params.trace?.encode?.(segment.index, performance.now() - encodeStart);
 
     // The user's regions go to the segment that holds their centre. Each region is sent once.
     const owned = regions ? regions.map((box, index) => ({ box, index })).filter((r) => segmentOwning(r.box, segments, h) === segment.index) : undefined;
@@ -277,12 +315,14 @@ async function translateStrip(
     const image = { mime: "image/jpeg", base64: bytesToBase64(segBytes) };
 
     // A failed segment is retried once. A cancelled request is not retried.
-    let answer = await callApi(settings, prompt, image, params);
-    if ("error" in answer && !params.signal?.aborted) answer = await callApi(settings, prompt, image, params);
+    let answer = await callApi(settings, prompt, image, params, { segment: segment.index, attempt: 1 });
+    if ("error" in answer && !params.signal?.aborted) answer = await callApi(settings, prompt, image, params, { segment: segment.index, attempt: 2 });
     if ("error" in answer) return { error: answer.error };
     truncated ||= answer.truncated;
 
+    const parseStart = performance.now();
     const parsed = parseModelOutput(answer.text, { width: segment.sendWidth, height: segment.sendHeight, regions: segRegions });
+    params.trace?.parse?.(segment.index, performance.now() - parseStart);
     if (owned) {
       // Region mode: the boxes are the user's own, the model only supplies the text, in the same order.
       parsed.units.forEach((u, j) => {

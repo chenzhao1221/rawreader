@@ -26,9 +26,9 @@ describe("context menu items", () => {
 
 describe("messageForMenuClick", () => {
   it("builds the image message from srcUrl", () => {
-    expect(messageForMenuClick({ menuItemId: MENU_TRANSLATE_IMAGE, srcUrl: " https://cdn.example.test/a.jpg " })).toEqual({
+    expect(messageForMenuClick({ menuItemId: MENU_TRANSLATE_IMAGE, srcUrl: " https://cdn.example.test/a.jpg " }, 1234)).toEqual({
       type: MSG_CONTEXT_TRANSLATE_IMAGE,
-      data: { srcUrl: "https://cdn.example.test/a.jpg" },
+      data: { srcUrl: "https://cdn.example.test/a.jpg", clickedAt: 1234 },
     });
   });
   it("ignores an image click without a URL", () => {

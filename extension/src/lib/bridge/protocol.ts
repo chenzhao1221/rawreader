@@ -1,5 +1,6 @@
 // Wire types of the RawReader app bridge (protocol version 1). They mirror src/main/bridge/protocol.ts in the
 // desktop app; the app validates every request with zod, so these are plain types here.
+import type { BgPerf } from "../perf/timeline";
 
 export const BRIDGE_PROTOCOL_VERSION = 1;
 export const DEFAULT_BRIDGE_PORT = 18793;
@@ -90,8 +91,8 @@ export interface BridgeTranslateMessage {
 }
 
 export type BridgeTranslateReply =
-  | { result: BridgeTranslateResponse }
-  | { error: BridgeFailure };
+  | { result: BridgeTranslateResponse; perf?: BgPerf }
+  | { error: BridgeFailure; perf?: BgPerf };
 
 export interface BridgePingMessage {
   type: "BRIDGE_PING";

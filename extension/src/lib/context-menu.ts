@@ -9,7 +9,7 @@ export const MSG_CONTEXT_TRANSLATE_IMAGE = "CONTEXT_TRANSLATE_IMAGE";
 export const MSG_CONTEXT_TRANSLATE_PAGE = "CONTEXT_TRANSLATE_PAGE";
 
 export type ContextTranslateMessage =
-  | { type: typeof MSG_CONTEXT_TRANSLATE_IMAGE; data: { srcUrl: string } }
+  | { type: typeof MSG_CONTEXT_TRANSLATE_IMAGE; data: { srcUrl: string; clickedAt?: number } }
   | { type: typeof MSG_CONTEXT_TRANSLATE_PAGE };
 
 type MenuContext = "image" | "page";
@@ -32,11 +32,11 @@ export interface MenuClickInfo {
   srcUrl?: string;
 }
 
-/** Message for the page for a click, or null when the click is not ours or has nothing to translate. */
-export function messageForMenuClick(info: MenuClickInfo): ContextTranslateMessage | null {
+/** Message for the page for a click, or null when the click is not ours or has nothing to translate. `now` is the click time. */
+export function messageForMenuClick(info: MenuClickInfo, now: number = Date.now()): ContextTranslateMessage | null {
   if (info.menuItemId === MENU_TRANSLATE_IMAGE) {
     const srcUrl = info.srcUrl?.trim();
-    return srcUrl ? { type: MSG_CONTEXT_TRANSLATE_IMAGE, data: { srcUrl } } : null;
+    return srcUrl ? { type: MSG_CONTEXT_TRANSLATE_IMAGE, data: { srcUrl, clickedAt: now } } : null;
   }
   if (info.menuItemId === MENU_TRANSLATE_PAGE) return { type: MSG_CONTEXT_TRANSLATE_PAGE };
   return null;

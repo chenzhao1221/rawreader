@@ -3,6 +3,7 @@
 <script lang="ts">
   import { getDebugLogs, clearDebugLogs } from "@/entrypoints/content/debug";
   import { Check, Copy, Download, LoaderCircle, RefreshCw, Trash2, TriangleAlert } from "lucide-svelte";
+  import { PERF_LOG_KEY, type PerfRecord } from "@/lib/perf/timeline";
 
   const DEBUG_ENABLED_KEY = "local:debug-enabled";
 
@@ -29,6 +30,27 @@
   let debugEnabled = $state(false);
   let togglingEnabled = $state(false);
   let internalOpen = $state(false);
+  let perfCount = $state(0);
+
+  async function loadPerfCount() {
+    perfCount = ((await storage.getItem<PerfRecord[]>(PERF_LOG_KEY)) ?? []).length;
+  }
+
+  async function exportPerf() {
+    const records = (await storage.getItem<PerfRecord[]>(PERF_LOG_KEY)) ?? [];
+    const blob = new Blob([JSON.stringify(records, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rawreader-perf-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function clearPerf() {
+    await storage.removeItem(PERF_LOG_KEY);
+    perfCount = 0;
+  }
 
   // Controlled when the parent swaps views; uncontrolled otherwise.
   const listOpen = $derived(showList ?? internalOpen);
@@ -46,6 +68,7 @@
     (async () => {
       debugEnabled = (await storage.getItem<boolean>(DEBUG_ENABLED_KEY)) ?? false;
       loadLogs();
+      loadPerfCount();
     })();
   });
 
@@ -163,6 +186,24 @@
     查看日志（{logs.length}）
   </button>
 {/if}
+
+<!-- Timing records: times, sizes and task numbers only (no addresses, titles, images or text). -->
+<div class="panel-card !p-3 flex items-center justify-between gap-2">
+  <div class="flex flex-col gap-0.5 min-w-0">
+    <span class="text-[13px] font-medium text-[var(--text-primary)]">测速记录</span>
+    <span class="text-xs text-[var(--text-muted)]">
+      {perfCount} 条（只存时间和尺寸，不含网址和文字）
+    </span>
+  </div>
+  <div class="flex items-center gap-2 shrink-0">
+    <button type="button" onclick={exportPerf} disabled={perfCount === 0} class="btn-ghost !py-1.5 !px-2.5 !text-[11px]">
+      导出测速记录
+    </button>
+    <button type="button" onclick={clearPerf} disabled={perfCount === 0} class="btn-ghost !py-1.5 !px-2.5 !text-[11px]">
+      清空
+    </button>
+  </div>
+</div>
 
 {#if listOpen}
 {#if onBack}

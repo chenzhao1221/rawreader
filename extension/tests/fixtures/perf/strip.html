@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sample Strip - Chapter 1 - Example Reader</title>
+  <style>body{margin:0;background:#222}img{display:block;margin:0 auto;width:800px}</style>
+</head>
+<body>
+  <!-- Synthetic page for the headless checks: one 800x10000 strip (four segments of at most 3072 px). -->
+  <img id="page" src="img/strip-800x10000.png">
+  <script>
+    const v = new URLSearchParams(location.search).get("v");
+    if (v) document.getElementById("page").src = "img/strip-800x10000.png?v=" + v;
+  </script>
+</body>
+</html>

@@ -2,14 +2,25 @@
 // (createImageBitmap and OffscreenCanvas exist there). Not unit-tested: it needs a real browser.
 import type { CropRect, ImageCodec } from "./image";
 
+/** Called once for every time the picture bytes are decoded (createImageBitmap), with the time it took. */
+export type DecodeProbe = (ms: number) => void;
+
+async function decode(bytes: Uint8Array, probe?: DecodeProbe): Promise<ImageBitmap> {
+  const t = performance.now();
+  const bitmap = await createImageBitmap(new Blob([bytes as BlobPart]));
+  probe?.(performance.now() - t);
+  return bitmap;
+}
+
 async function encode(
   bytes: Uint8Array,
   source: CropRect | null,
   width: number,
   height: number,
   quality: number,
+  probe?: DecodeProbe,
 ): Promise<Uint8Array> {
-  const bitmap = await createImageBitmap(new Blob([bytes as BlobPart]));
+  const bitmap = await decode(bytes, probe);
   try {
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext("2d");
@@ -29,17 +40,22 @@ async function encode(
   }
 }
 
-export const browserImageCodec: ImageCodec = {
-  async measure(bytes) {
-    const bitmap = await createImageBitmap(new Blob([bytes as BlobPart]));
-    try {
-      return { width: bitmap.width, height: bitmap.height };
-    } finally {
-      bitmap.close();
-    }
-  },
+/** A codec that reports every decode to `probe` (the measurements count them). */
+export function createBrowserCodec(probe?: DecodeProbe): ImageCodec {
+  return {
+    async measure(bytes) {
+      const bitmap = await decode(bytes, probe);
+      try {
+        return { width: bitmap.width, height: bitmap.height };
+      } finally {
+        bitmap.close();
+      }
+    },
 
-  encodeJpeg: (bytes, width, height, quality) => encode(bytes, null, width, height, quality),
+    encodeJpeg: (bytes, width, height, quality) => encode(bytes, null, width, height, quality, probe),
 
-  cropEncodeJpeg: (bytes, rect, width, height, quality) => encode(bytes, rect, width, height, quality),
-};
+    cropEncodeJpeg: (bytes, rect, width, height, quality) => encode(bytes, rect, width, height, quality, probe),
+  };
+}
+
+export const browserImageCodec: ImageCodec = createBrowserCodec();

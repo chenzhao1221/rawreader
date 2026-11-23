@@ -12,10 +12,11 @@ import { DefaultConfig, resolveLangGroup } from "@/lib/configs";
 import { BridgeMemo } from "@/lib/bridge/memo";
 import { contextToBridge } from "@/lib/bridge/client";
 import { browserImageCodec } from "@/lib/direct/image-browser";
-import { acquireImageDataUrl } from "@/lib/image-source";
+import { acquireImageDataUrl, dataUrlByteLength } from "@/lib/image-source";
 import { findImageForSrcUrl } from "@/lib/image-match";
 import { MSG_CONTEXT_TRANSLATE_PAGE, isContextTranslateMessage } from "@/lib/context-menu";
 import type { BridgeBox, BridgeTranslateReply } from "@/lib/bridge/protocol";
+import { TaskTimeline, type BgPerf, type TaskOrigin } from "@/lib/perf/timeline";
 import { logDebugEntry, updateDebugEntry } from "./debug";
 import {
   createImageObservers,
@@ -110,6 +111,10 @@ export default defineContentScript({
       { url: string; boxesKey: string }
     >(); // inpainted base images, keyed to the exact set of painted boxes
     const debugEntryIdBySrc = new Map<string, string>(); // src → last debug entry id
+    // Where each queued task came from, so the timing record can start at the menu click for a manual task.
+    const taskMeta = new WeakMap<Element, { origin: TaskOrigin; receivedAt: number; receivedWall: number; clickedAt?: number | undefined }>();
+    let taskSeq = 0;
+    const manifestVersion = () => (browser.runtime.getManifest() as any).version_name || browser.runtime.getManifest().version;
     const overlays = new Map<
       string,
       { ui: ShadowRootContentScriptUi<any>; wrapper: HTMLElement }
@@ -134,6 +139,7 @@ export default defineContentScript({
     });
 
     async function startTranslationPipeline(imgElement: MangaTargetElement) {
+      const dequeuedAt = performance.now();
       if (!imgElement || !document.body.contains(imgElement)) return;
       const rawSrc = getElementSrc(imgElement);
       if (!rawSrc) return;
@@ -199,6 +205,31 @@ export default defineContentScript({
       // Mark pending BEFORE any heavy work / overlay creation so second call strict-blocks
       Registry.markPending(originalSrc, pendingCacheKey);
 
+      // Timing marks for the measurement log. A manual task starts at the menu click.
+      const meta = taskMeta.get(imgElement);
+      taskMeta.delete(imgElement);
+      const timeline = new TaskTimeline(
+        `t${++taskSeq}-${Date.now().toString(36)}`,
+        meta?.origin ?? "auto",
+        undefined,
+        meta ? performance.now() - meta.receivedAt + (meta.clickedAt !== undefined ? Math.max(0, meta.receivedWall - meta.clickedAt) : 0) : 0,
+      );
+      if (meta) {
+        if (meta.clickedAt !== undefined) timeline.markAt("click", meta.receivedAt - Math.max(0, meta.receivedWall - meta.clickedAt));
+        timeline.markAt("enqueue", meta.receivedAt);
+      }
+      timeline.markAt("dequeue", dequeuedAt);
+      timeline.set("width", "naturalWidth" in imgElement ? imgElement.naturalWidth : imgElement.width);
+      timeline.set("height", "naturalHeight" in imgElement ? imgElement.naturalHeight : imgElement.height);
+      let bgPerf: BgPerf | undefined;
+      let timelineDone = false;
+      const finishTask = (outcome: "done" | "partial" | "error" | "closed", error?: string) => {
+        if (timelineDone) return;
+        timelineDone = true;
+        const record = timeline.toRecord({ version: manifestVersion(), outcome, ...(error ? { error } : {}), ...(bgPerf ? { bg: bgPerf } : {}) });
+        browser.runtime.sendMessage({ type: "PERF_RECORD", data: record }).catch(() => {});
+      };
+
       // Yield the main thread immediately so the user's click handler returns
       // and the browser can process the next UI event (e.g. opening the popup
       // via the action icon) before we start blocking the page on heavy work.
@@ -217,6 +248,7 @@ export default defineContentScript({
       let src = originalSrc;
       // Set when every way of getting the image failed; the bridge call below then answers image-unavailable.
       let imageFailure: string | null = null;
+      timeline.mark("fetch-start");
       if (!originalSrc.startsWith("data:")) {
         if (imgElement instanceof HTMLCanvasElement) {
           // No tab screenshots (ER7.8): a canvas that cannot be exported is skipped.
@@ -248,11 +280,14 @@ export default defineContentScript({
               log: (step, reason) => console.warn(`RawReader: image step "${step}" failed: ${reason}`),
             });
             src = got.dataUrl;
+            timeline.set("image-step", got.step);
+            timeline.set("image-bytes", dataUrlByteLength(got.dataUrl));
           } catch (err) {
             imageFailure = err instanceof Error ? err.message : String(err);
           }
         }
       }
+      timeline.mark("fetch-end");
 
         // Bridge mode: one request to the RawReader app (through the background worker) answers both stages.
         const loadBridgeContext = async () => {
@@ -271,6 +306,7 @@ export default defineContentScript({
         const bridgeMemo = new BridgeMemo(async (boxes?: BridgeBox[]) => {
           // Every way of getting the image failed: no point asking the backend; report the last step's reason.
           if (imageFailure !== null) return { error: { code: "image-unavailable", message: imageFailure } };
+          timeline.mark("request-sent");
           const reply = (await browser.runtime.sendMessage({
             type: "BRIDGE_TRANSLATE",
             data: {
@@ -281,6 +317,8 @@ export default defineContentScript({
               priority: viewportPriority(),
             },
           })) as BridgeTranslateReply | undefined;
+          timeline.mark("result-received");
+          if (reply?.perf) bgPerf = reply.perf;
           return reply ?? { error: { code: "unreachable", message: "No answer from the background worker" } };
         });
 
@@ -349,11 +387,15 @@ export default defineContentScript({
                     await storage.removeItem(`local:${await translationKey()}`);
                     return;
                   }
+                  const tRepaint = performance.now();
                   const translatedSrc = await repaintWithTranslations(
                     src,
                     cache.bboxes,
                     cache.translations,
                   );
+                  timeline.set("cache-hit", true);
+                  timeline.add("draw-ms", performance.now() - tRepaint);
+                  timeline.mark("cache-restored");
                   translatedSrcMap.set(srcKey(translatedSrc), originalSrc);
                   return {
                     bboxes: cache.bboxes,
@@ -368,6 +410,7 @@ export default defineContentScript({
                   const tStart = performance.now();
                   const res = await bridgeMemo.detect();
                   lastDetectMs = performance.now() - tStart;
+                  if (!Array.isArray(res)) finishTask("error", res.error);
                   return res;
                 },
 
@@ -438,10 +481,12 @@ export default defineContentScript({
 
                   // The app reads, translates and caches; the series context was sent with the request as prompt background.
                   const resp = await bridgeMemo.translate(bboxes, { rawText: opts?.rawText });
+                  timeline.mark("translate-returned");
 
                   const duration = performance.now() - t0;
 
                   if ("error" in resp) {
+                    finishTask("error", resp.error);
                     if (!opts?.transient) {
 
                       // Fire-and-forget debug log so a slow storage write never
@@ -597,6 +642,7 @@ export default defineContentScript({
                   // Only regions we actually paint get inpainted: a gate-skipped
                   // or empty region keeps its original text untouched (erasing
                   // without painting was a latent defect for failed OCR too).
+                  timeline.mark("render-start");
                   const paintable = bboxes.filter((_, i) => translations[i]);
                   const boxesKey = JSON.stringify(
                     paintable.map((b) => [
@@ -617,6 +663,7 @@ export default defineContentScript({
                     const tInpaint = performance.now();
                     const res = await inpaintImage(src, paintable);
                     inpaintMs = performance.now() - tInpaint;
+                    timeline.add("inpaint-ms", inpaintMs);
                     cached = { url: res.url, boxesKey };
                     inpaintedSrcCache.set(src, cached);
                     inpaintMethod = res.method;
@@ -696,14 +743,18 @@ export default defineContentScript({
                     }
                   }
 
+                  const tDraw = performance.now();
                   const translatedSrc = await drawTranslations(
                     cached.url,
                     bboxes,
                     translations,
                   );
+                  timeline.add("draw-ms", performance.now() - tDraw);
+                  timeline.add("renders", 1);
                   translatedSrcMap.set(srcKey(translatedSrc), originalSrc);
 
                   // Persist edited translations and bboxes so cache re-open shows them
+                  const tPersist = performance.now();
                   const cache = await storage.getItem<PageCache>(
                     `local:${await translationKey()}`,
                   );
@@ -718,6 +769,8 @@ export default defineContentScript({
                       },
                     );
                   }
+                  timeline.add("persist-ms", performance.now() - tPersist);
+                  timeline.mark("render-end");
 
                   return translatedSrc;
                 },
@@ -787,11 +840,18 @@ export default defineContentScript({
                   inpaintedSrcCache.delete(src);
                 },
 
+                onPaint: () => {
+                  timeline.mark("first-paint");
+                  timeline.mark("final-paint");
+                  finishTask("done");
+                },
+
                 onClose: () => overlays.get(originalSrc)?.ui?.remove(),
               },
             }),
 
           onRemove: (app) => {
+            finishTask("closed");
             if (app) unmount(app);
 
             overlays.delete(originalSrc);
@@ -916,6 +976,12 @@ export default defineContentScript({
           console.warn("RawReader: could not find the image for the right-clicked URL on this page");
           return;
         }
+        taskMeta.set(target, {
+          origin: "manual",
+          receivedAt: performance.now(),
+          receivedWall: Date.now(),
+          clickedAt: msg.data.clickedAt,
+        });
         autoTranslator.enqueueManual(target);
         return;
       }

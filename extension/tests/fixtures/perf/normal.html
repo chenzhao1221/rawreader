@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sample Series - Chapter 1 - Example Reader</title>
+  <style>body{margin:0;background:#222}img{display:block;margin:0 auto;width:900px}</style>
+</head>
+<body>
+  <!-- Synthetic page for the headless checks: one plain image. -->
+  <img id="page" src="img/page-1200x1700.png">
+  <script>
+    const v = new URLSearchParams(location.search).get("v");
+    if (v) document.getElementById("page").src = "img/page-1200x1700.png?v=" + v;
+  </script>
+</body>
+</html>

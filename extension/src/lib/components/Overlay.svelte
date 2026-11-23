@@ -72,6 +72,8 @@
       addedPatches: Bbox[],
       removedPatches: Bbox[],
     ) => Promise<string>;
+    /** Called after a translated picture was loaded into the page and one frame was drawn. */
+    onPaint?: () => void;
   }
 
   let {
@@ -91,6 +93,7 @@
     getCleanedSrc,
     applyInpaintPatches,
     getNotice,
+    onPaint,
   }: Props = $props();
 
   const rawDisplaySrc = $derived(rawImageUrl || originalSrc);
@@ -1262,6 +1265,9 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       src={showOriginal ? rawDisplaySrc : translatedUrl}
       alt={showOriginal ? "原图" : "译图"}
       class="w-full h-full object-contain select-none pointer-events-none"
+      onload={() => {
+        if (!showOriginal) requestAnimationFrame(() => onPaint?.());
+      }}
     />
     {#if !showOriginal}
       {#each bboxes as box, i}

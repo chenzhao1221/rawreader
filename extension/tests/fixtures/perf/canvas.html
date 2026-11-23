@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Canvas Sample - Chapter 1 - Example Reader</title>
+  <style>body{margin:0;background:#222}canvas{display:block;margin:0 auto;width:900px}</style>
+</head>
+<body>
+  <!-- Synthetic page: a reader that paints the page on a canvas. -->
+  <canvas id="page" width="1200" height="1700"></canvas>
+  <script>
+    const img = new Image();
+    img.onload = () => document.getElementById("page").getContext("2d").drawImage(img, 0, 0);
+    img.src = "img/page-1200x1700.png?v=canvas";
+  </script>
+</body>
+</html>

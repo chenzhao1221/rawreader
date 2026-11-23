@@ -16,13 +16,14 @@ import { DefaultConfig } from "@/lib/configs";
 import { CONTEXT_MENU_ITEMS, messageForMenuClick } from "@/lib/context-menu";
 import { translateDirect } from "@/lib/direct/client";
 import { NO_BACKEND_CODE } from "@/lib/direct/errors";
-import { browserImageCodec } from "@/lib/direct/image-browser";
+import { createBrowserCodec } from "@/lib/direct/image-browser";
 import { isDirectConfigured, originPatternFor } from "@/lib/direct/providers";
 import { selectBackend, type BackendKind } from "@/lib/direct/select";
 import type { BackendStatusReply } from "@/lib/direct/status";
 import { loadBackendSettings } from "@/lib/direct/settings";
 import { ImageDownloadError, proxyFetch, type ProxyFetchDeps, type SessionRuleApi } from "@/lib/image-proxy";
 import { BRIDGE_TRANSLATE_TIMEOUT_MS, INPAINT_TIMEOUT_MS, MAX_BRIDGE_REQUESTS_PER_TAB } from "@/lib/timeouts";
+import { appendPerfRecord, BgTimeline, PERF_LOG_KEY, type PerfRecord } from "@/lib/perf/timeline";
 import { createAsyncResponder, keepAliveWhile, withTimeout } from "./messaging";
 import { ensureOffscreen } from "./utils";
 
@@ -30,6 +31,17 @@ import { ensureOffscreen } from "./utils";
 const BRIDGE_PORT_CACHE_KEY = "local:bridge-port-cache";
 
 export default defineBackground(() => {
+  // ── Measurement state: when this worker process started and how many tasks it has handled ──
+  const workerStartedAt = performance.now();
+  let workerTasks = 0;
+  // Records are appended one after the other, so two tabs finishing together cannot overwrite each other.
+  let perfWrites: Promise<unknown> = Promise.resolve();
+  const savePerfRecord = (record: PerfRecord) => {
+    perfWrites = perfWrites
+      .then(async () => storage.setItem(PERF_LOG_KEY, appendPerfRecord(await storage.getItem<PerfRecord[]>(PERF_LOG_KEY), record)))
+      .catch(() => {});
+    return perfWrites;
+  };
   // ── Per-tab state: a small concurrency cap and an abort switch for navigation ──
   const gates = new Map<number, PriorityGate>();
   const controllers = new Map<number, Set<AbortController>>();
@@ -101,8 +113,15 @@ export default defineBackground(() => {
     if (!controllers.has(key)) controllers.set(key, new Set());
     controllers.get(key)!.add(controller);
     let release: (() => void) | null = null;
+    // Timings for the measurement log (times only, no addresses or text).
+    const cold = workerTasks === 0;
+    workerTasks += 1;
+    let perf: BgTimeline | null = null;
+    const withPerf = (reply: BridgeTranslateReply): BridgeTranslateReply => (perf ? { ...reply, perf: perf.finish() } : reply);
     try {
+      const gateStart = performance.now();
       release = await gateFor(key).acquire(priority, controller.signal);
+      const gateWait = performance.now() - gateStart;
       await originRuleReady;
       // Choose the backend for every request: the app may have been closed, reopened or moved to another port,
       // and the user may have changed the settings.
@@ -119,26 +138,53 @@ export default defineBackground(() => {
         return { error: { code: NO_BACKEND_CODE, message: "No translation backend is available" } };
       }
 
+      perf = new BgTimeline(
+        {
+          backend: kind === "direct" ? "direct" : "rawreader",
+          cold,
+          workerAgeMs: performance.now() - workerStartedAt,
+          ...(kind === "direct" ? { provider: settings.direct.provider, model: settings.direct.model } : {}),
+        },
+      );
+      perf.addGateWait(gateWait);
+
       if (kind === "direct") {
         const pattern = originPatternFor(settings.direct.baseUrl);
         if (!pattern || !(await browser.permissions.contains({ origins: [pattern] }).catch(() => false))) {
-          return { error: { code: "direct-permission", message: "No permission for the API host" } };
+          return withPerf({ error: { code: "direct-permission", message: "No permission for the API host" } });
         }
-        const bytes = await imageBytes(src, referer);
+        const bytes = await perf.timed((ms) => (perf!.perf.imageMs += ms), () => imageBytes(src, referer));
         const targetLang = (await storage.getItem<string>("sync:target-lang").catch(() => null)) ?? DefaultConfig.targetLang;
-        return await translateDirect(settings.direct, {
+        const timeline = perf;
+        const reply = await translateDirect(settings.direct, {
           bytes,
-          codec: browserImageCodec,
+          codec: createBrowserCodec((ms) => timeline.addDecode(ms)),
           targetLang,
           context,
           boxes,
           signal: controller.signal,
+          trace: {
+            plan: (info) => {
+              timeline.perf.width = info.width;
+              timeline.perf.height = info.height;
+              timeline.perf.segments = info.segments;
+            },
+            encode: (segment, ms) => timeline.addEncode(segment, ms),
+            roundTrip: (entry) => timeline.addRoundTrip(entry),
+            parse: (segment, ms) => {
+              const last = [...timeline.perf.roundTrips].reverse().find((r) => r.segment === segment);
+              if (last) last.parseMs += Math.round(ms * 10) / 10;
+            },
+          },
         });
+        return withPerf(reply);
       }
 
       if (!probe || !probe.ok) return { error: probe && !probe.ok ? probe.error : { code: "unreachable", message: "Cannot reach the app" } };
-      const bytes = await imageBytes(src, referer);
-      return await translateViaBridge({ port: probe.port }, { bytes, boxes, context, priority, signal: controller.signal, timeoutMs: BRIDGE_TRANSLATE_TIMEOUT_MS });
+      const bytes = await perf.timed((ms) => (perf!.perf.imageMs += ms), () => imageBytes(src, referer));
+      const reply = await translateViaBridge({ port: probe.port }, { bytes, boxes, context, priority, signal: controller.signal, timeoutMs: BRIDGE_TRANSLATE_TIMEOUT_MS });
+      if ("result" in reply) perf.perf.app = reply.result.timings;
+      return withPerf(reply);
     } catch (error) {
       if ((error as { name?: string })?.name === "AbortError") return { error: { code: "timeout", message: "Cancelled" } };
       if (error instanceof ImageDownloadError) {
@@ -220,6 +266,13 @@ export default defineBackground(() => {
     if (msg.type === "BRIDGE_TRANSLATE") {
       keepAliveWhile(bridgeTranslate(msg as BridgeTranslateMessage, sender.tab?.id).then(respond).catch(respondErr));
       return true;
+    }
+
+    // Timing record of one finished task (times and sizes only), written to the local ring log.
+    if (msg.type === "PERF_RECORD") {
+      const record = msg.data as PerfRecord | undefined;
+      if (record && record.v === 1 && !sender.tab?.incognito) void savePerfRecord(record);
+      return false;
     }
 
     // Proxy image fetch for cross-origin or hotlink-protected images (Referer checks); answers a data URL.

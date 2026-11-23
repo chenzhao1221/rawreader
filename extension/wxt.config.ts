@@ -3,16 +3,33 @@
 //
 // RawReader changes: name from the app identity, no WebGPU / WASM / cross-origin isolation, no dev Chromium flags.
 import { defineConfig } from "wxt";
+import { execSync } from "node:child_process";
 import tailwindcss from "@tailwindcss/vite";
 import identity from "../app-identity.json";
 import extensionKey from "./extension-key.json";
 import pkg from "./package.json";
 import { presetHostPatterns } from "./src/lib/direct/providers";
 
+/** Build label written into the timing records: RAWREADER_BUILD_LABEL, else the short git hash of HEAD. */
+function buildLabel(): string {
+  const fromEnv = process.env.RAWREADER_BUILD_LABEL?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    return execSync("git rev-parse --short HEAD", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 // See https://wxt.dev/api/config.html
 export default defineConfig({
+  // RAWREADER_OUT_DIR builds somewhere else (the measurements build each step into _local without touching the
+  // folder Chrome has loaded). The default stays .output.
+  outDir: process.env.RAWREADER_OUT_DIR?.trim() || ".output",
+
   vite: () => ({
     plugins: [tailwindcss() as any],
+    define: { __BUILD_ID__: JSON.stringify(buildLabel()) },
     build: {
       target: "esnext",
       minify: import.meta.env.PROD ? "terser" : "esbuild",
