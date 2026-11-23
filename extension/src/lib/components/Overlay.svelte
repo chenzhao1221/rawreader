@@ -25,6 +25,8 @@
     scaleX: number;
     scaleY: number;
     originalSrc: string;
+    /** The page element this overlay is for. Translation status is kept per element. */
+    ownerEl?: Element;
     rawImageUrl?: string;
     wrapper: HTMLElement;
     getTranslationCache: () => Promise<
@@ -81,6 +83,7 @@
     scaleX,
     scaleY,
     originalSrc,
+    ownerEl,
     rawImageUrl,
     wrapper,
     getTranslationCache,
@@ -368,7 +371,7 @@
     // Detection failed before any boxes existed (mode still "loading"):
     // drop to refining so the user can draw boxes manually.
     mode = "refining";
-    Registry.markIdle(originalSrc);
+    Registry.markIdle(originalSrc, undefined, ownerEl);
   }
 
 function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
@@ -485,7 +488,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       const offerManual = !autoStart || offersManualSelect("error", await readManualOnlyNoText());
       if (offerManual) mode = "refining";
       showError(result.error, offerManual);
-      Registry.markIdle(originalSrc);
+      Registry.markIdle(originalSrc, undefined, ownerEl);
       return;
     }
 
@@ -516,11 +519,11 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     } catch (err) {
       mode = "refining";
       showError((err as Error).message);
-      Registry.markIdle(originalSrc);
+      Registry.markIdle(originalSrc, undefined, ownerEl);
       return;
     }
     mode = "results";
-    Registry.markDone(originalSrc);
+    Registry.markDone(originalSrc, undefined, ownerEl);
   }
 
   async function handleConfirm() {
@@ -687,7 +690,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       isManuallySorted = false;
       onBackToRefine?.();
       mode = "refining";
-      Registry.markIdle(originalSrc);
+      Registry.markIdle(originalSrc, undefined, ownerEl);
     }
   }
 
@@ -805,7 +808,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
     if (!Array.isArray(rawBboxes)) {
       const onlyNoText = await readManualOnlyNoText();
       showError(rawBboxes?.error, offersManualSelect("error", onlyNoText));
-      Registry.markIdle(originalSrc);
+      Registry.markIdle(originalSrc, undefined, ownerEl);
       // Legacy autoclose preserved behind flag (see ERROR_AUTOCLOSE above).
       if (ERROR_AUTOCLOSE) {
         setTimeout(() => onClose(), 5000); // closes after error fades
@@ -847,7 +850,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
       translations = initialCache.translations ?? [];
       sourceTexts = initialCache.sourceTexts ?? [];
       cleanedUrl = initialCache.cleanedSrc ?? "";
-      Registry.markDone(originalSrc);
+      Registry.markDone(originalSrc, undefined, ownerEl);
     } else {
       const [skipRefining, autoTranslate, currentMode] = await Promise.all([
         storage.getItem<boolean>("sync:skip-bbox-refining"),
@@ -863,7 +866,7 @@ function applyBboxesSort(direction: "rtl" | "ltr" = "rtl") {
         await executeTranslation(true);
       } else {
         mode = "refining";
-        Registry.markIdle(originalSrc);
+        Registry.markIdle(originalSrc, undefined, ownerEl);
       }
     }
   });

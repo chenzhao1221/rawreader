@@ -2,19 +2,31 @@
 // AGPL-3.0-or-later, (C) 2026 Libre Manga Translator; modified by RawReader.
 import Overlay from "@/lib/components/Overlay.svelte";
 import Sidebar from "@/lib/components/Sidebar.svelte";
-import FloatingTrigger from "@/lib/components/FloatingTrigger.svelte";
+import TaskStatusBar from "@/lib/components/TaskStatusBar.svelte";
 import { AutoTranslateOrchestrator } from "./auto-translate";
 import * as Registry from "./translation-registry";
 import { mount, unmount } from "svelte";
 import { ShadowRootContentScriptUi, storage } from "#imports";
-import { getSiteRule, resolveActiveSiteRule } from "@/lib/adapters";
+import { getSiteRule } from "@/lib/adapters";
 import { DefaultConfig, resolveLangGroup } from "@/lib/configs";
 import { BridgeMemo } from "@/lib/bridge/memo";
 import { contextToBridge } from "@/lib/bridge/client";
 import { browserImageCodec } from "@/lib/direct/image-browser";
 import { acquireImageDataUrl, dataUrlByteLength } from "@/lib/image-source";
-import { findImageForSrcUrl } from "@/lib/image-match";
-import { MSG_CONTEXT_TRANSLATE_PAGE, isContextTranslateMessage } from "@/lib/context-menu";
+import { findImageForSrcUrl, matchRank } from "@/lib/image-match";
+import { MSG_CONTEXT_TARGET, MSG_CONTEXT_TRANSLATE_PAGE, isContextTranslateMessage } from "@/lib/context-menu";
+import {
+  meetsBeneathSize,
+  meetsPageSize,
+  pickForCommand,
+  resolveContextTarget,
+  type ContextRecord,
+  type TargetEnv,
+} from "@/lib/context-target";
+import type { TaskStatusEvent } from "@/lib/task-status";
+
+/** A status event without its task number (added when it is sent). */
+type StatusEventBody = TaskStatusEvent extends infer E ? (E extends { taskId: string } ? Omit<E, "taskId"> : never) : never;
 import type { BridgeBox, BridgeTranslateReply } from "@/lib/bridge/protocol";
 import { TaskTimeline, type BgPerf, type TaskOrigin } from "@/lib/perf/timeline";
 import { logDebugEntry, updateDebugEntry } from "./debug";
@@ -111,15 +123,56 @@ export default defineContentScript({
       { url: string; boxesKey: string }
     >(); // inpainted base images, keyed to the exact set of painted boxes
     const debugEntryIdBySrc = new Map<string, string>(); // src → last debug entry id
-    // Where each queued task came from, so the timing record can start at the menu click for a manual task.
-    const taskMeta = new WeakMap<Element, { origin: TaskOrigin; receivedAt: number; receivedWall: number; clickedAt?: number | undefined }>();
+    // One entry per page element that is queued or running. The status bar and the timing record share its number.
+    interface TaskCtx {
+      id: string;
+      el: MangaTargetElement;
+      origin: TaskOrigin;
+      /** `performance.now()` and `Date.now()` when the page heard of the task. */
+      receivedAt: number;
+      receivedWall: number;
+      /** Menu click time (ms since epoch), for a manual task. */
+      clickedAt?: number | undefined;
+      /** The pipeline has begun: a later request for the same element starts a new task. */
+      started: boolean;
+    }
+    const taskCtx = new WeakMap<Element, TaskCtx>();
     let taskSeq = 0;
+    let originHint: TaskOrigin | null = null;
     const manifestVersion = () => (browser.runtime.getManifest() as any).version_name || browser.runtime.getManifest().version;
-    const overlays = new Map<
-      string,
+    // Overlays are kept per page element: the same picture address can appear twice on a page.
+    const overlays = new WeakMap<
+      Element,
       { ui: ShadowRootContentScriptUi<any>; wrapper: HTMLElement }
     >();
     let lastDetectMs: number | undefined = undefined;
+
+    const emitStatus = (task: TaskCtx, event: StatusEventBody) => {
+      document.dispatchEvent(
+        new CustomEvent("lmt:task-status-event", { detail: { event: { ...event, taskId: task.id }, el: task.el } }),
+      );
+    };
+    const beginTask = (el: MangaTargetElement, origin: TaskOrigin, clickedAt?: number): TaskCtx => {
+      const existing = taskCtx.get(el);
+      if (existing && !existing.started) {
+        if (origin === "manual") {
+          existing.origin = "manual";
+          existing.clickedAt = clickedAt;
+        }
+        return existing;
+      }
+      const task: TaskCtx = {
+        id: `t${++taskSeq}-${Date.now().toString(36)}`,
+        el,
+        origin,
+        receivedAt: performance.now(),
+        receivedWall: Date.now(),
+        clickedAt,
+        started: false,
+      };
+      taskCtx.set(el, task);
+      return task;
+    };
 
     // Mount independent sidebar shadow UI
     createShadowRootUi(ctx, {
@@ -148,10 +201,9 @@ export default defineContentScript({
       if (!originalSrc) return;
 
       // ── Strict early registry guard (LMT-only, no page-world exposure) ──
-      const syncK = Registry.srcKeyOf(originalSrc);
-      if (Registry.isPending(syncK)) return;
-      if (Registry.getStatus(syncK) === "done" && overlays.has(originalSrc)) {
-        const existingDone = overlays.get(originalSrc)!;
+      if (Registry.isPending(originalSrc, imgElement)) return;
+      if (Registry.getStatus(originalSrc, imgElement) === "done" && overlays.has(imgElement)) {
+        const existingDone = overlays.get(imgElement)!;
         if (document.body.contains(existingDone.wrapper)) {
           existingDone.wrapper.dispatchEvent(
             new CustomEvent("lmt:back-to-refine"),
@@ -159,16 +211,16 @@ export default defineContentScript({
           return;
         }
         // Overlay was done but wrapper detached — clear stale done so cache-restore can run
-        Registry.markIdle(originalSrc);
+        Registry.markIdle(originalSrc, undefined, imgElement);
       }
 
       // If overlay already exists (idle/refining state), bring it back to refine mode
-      if (overlays.has(originalSrc)) {
-        const existing = overlays.get(originalSrc)!;
+      if (overlays.has(imgElement)) {
+        const existing = overlays.get(imgElement)!;
 
         if (!document.body.contains(existing.wrapper)) {
           existing.ui.remove();
-          overlays.delete(originalSrc);
+          overlays.delete(imgElement);
         } else {
           // It is still alive on the page, just bring it back to refine mode
           existing.wrapper.dispatchEvent(
@@ -182,19 +234,26 @@ export default defineContentScript({
       // page, not-yet-loaded). Geometry captured now would freeze the wrapper
       // at 0×0. Nothing is claimed yet, so a plain return is safe — the queue
       // releases the slot and rescan retries when the page is visible.
-      if (!(await waitForLaidOutImage(imgElement))) return;
+      if (!(await waitForLaidOutImage(imgElement))) {
+        const waiting = taskCtx.get(imgElement);
+        if (waiting && !waiting.started) {
+          document.dispatchEvent(new CustomEvent("lmt:task-status-event", { detail: { remove: true, taskId: waiting.id } }));
+          taskCtx.delete(imgElement);
+        }
+        return;
+      }
 
       // Claim the pipeline SYNCHRONOUSLY (before the first await below)
       // so queue slot accounting sees pending on the same tick the queue
       // dispatched this call. The full cacheKey attaches right after.
-      Registry.markPending(originalSrc);
+      Registry.markPending(originalSrc, undefined, imgElement);
 
       // Compute full cacheKey early for strict block on pending cacheKey
       let pendingCacheKey: string | undefined;
       try {
         pendingCacheKey = await Registry.resolveCacheKey(imgElement, originalSrc);
-        if (Registry.getStatusByCacheKey(pendingCacheKey) === "pending") {
-          Registry.markIdle(originalSrc);
+        if (Registry.getStatusByCacheKey(pendingCacheKey, imgElement) === "pending") {
+          Registry.markIdle(originalSrc, undefined, imgElement);
           return;
         }
       } catch {
@@ -203,21 +262,24 @@ export default defineContentScript({
 
       // Attach the cacheKey to the pending claim (idempotent re-mark).
       // Mark pending BEFORE any heavy work / overlay creation so second call strict-blocks
-      Registry.markPending(originalSrc, pendingCacheKey);
+      Registry.markPending(originalSrc, pendingCacheKey, imgElement);
+
+      // The task of this element: made when it was queued, or now for a picture that starts at once.
+      const task = beginTask(imgElement, "auto");
+      const fresh = !task.started;
+      task.started = true;
+      if (fresh) emitStatus(task, { type: "start", phase: "fetching" });
+      else emitStatus(task, { type: "fetching" });
 
       // Timing marks for the measurement log. A manual task starts at the menu click.
-      const meta = taskMeta.get(imgElement);
-      taskMeta.delete(imgElement);
       const timeline = new TaskTimeline(
-        `t${++taskSeq}-${Date.now().toString(36)}`,
-        meta?.origin ?? "auto",
+        task.id,
+        task.origin,
         undefined,
-        meta ? performance.now() - meta.receivedAt + (meta.clickedAt !== undefined ? Math.max(0, meta.receivedWall - meta.clickedAt) : 0) : 0,
+        performance.now() - task.receivedAt + (task.clickedAt !== undefined ? Math.max(0, task.receivedWall - task.clickedAt) : 0),
       );
-      if (meta) {
-        if (meta.clickedAt !== undefined) timeline.markAt("click", meta.receivedAt - Math.max(0, meta.receivedWall - meta.clickedAt));
-        timeline.markAt("enqueue", meta.receivedAt);
-      }
+      if (task.clickedAt !== undefined) timeline.markAt("click", task.receivedAt - Math.max(0, task.receivedWall - task.clickedAt));
+      timeline.markAt("enqueue", task.receivedAt);
       timeline.markAt("dequeue", dequeuedAt);
       timeline.set("width", "naturalWidth" in imgElement ? imgElement.naturalWidth : imgElement.width);
       timeline.set("height", "naturalHeight" in imgElement ? imgElement.naturalHeight : imgElement.height);
@@ -228,6 +290,10 @@ export default defineContentScript({
         timelineDone = true;
         const record = timeline.toRecord({ version: manifestVersion(), outcome, ...(error ? { error } : {}), ...(bgPerf ? { bg: bgPerf } : {}) });
         browser.runtime.sendMessage({ type: "PERF_RECORD", data: record }).catch(() => {});
+      };
+      const failTask = (message: string) => {
+        emitStatus(task, { type: "failed", error: message });
+        finishTask("error", message);
       };
 
       // Yield the main thread immediately so the user's click handler returns
@@ -254,7 +320,8 @@ export default defineContentScript({
           // No tab screenshots (ER7.8): a canvas that cannot be exported is skipped.
           const canvasUrl = imageToBase64(imgElement);
           if (!canvasUrl) {
-            Registry.markIdle(originalSrc);
+            Registry.markIdle(originalSrc, pendingCacheKey, imgElement);
+            failTask("这块画布不允许读取，无法翻译");
             return;
           }
           src = canvasUrl;
@@ -307,6 +374,7 @@ export default defineContentScript({
           // Every way of getting the image failed: no point asking the backend; report the last step's reason.
           if (imageFailure !== null) return { error: { code: "image-unavailable", message: imageFailure } };
           timeline.mark("request-sent");
+          emitStatus(task, { type: "translating" });
           const reply = (await browser.runtime.sendMessage({
             type: "BRIDGE_TRANSLATE",
             data: {
@@ -371,6 +439,7 @@ export default defineContentScript({
                 scaleX,
                 scaleY,
                 originalSrc,
+                ownerEl: imgElement,
                 rawImageUrl: src,
                 getNotice: () => bridgeMemo.notice,
 
@@ -410,7 +479,7 @@ export default defineContentScript({
                   const tStart = performance.now();
                   const res = await bridgeMemo.detect();
                   lastDetectMs = performance.now() - tStart;
-                  if (!Array.isArray(res)) finishTask("error", res.error);
+                  if (!Array.isArray(res)) failTask(res.error);
                   return res;
                 },
 
@@ -486,7 +555,7 @@ export default defineContentScript({
                   const duration = performance.now() - t0;
 
                   if ("error" in resp) {
-                    finishTask("error", resp.error);
+                    if (!opts?.transient) failTask(resp.error);
                     if (!opts?.transient) {
 
                       // Fire-and-forget debug log so a slow storage write never
@@ -843,28 +912,30 @@ export default defineContentScript({
                 onPaint: () => {
                   timeline.mark("first-paint");
                   timeline.mark("final-paint");
+                  emitStatus(task, { type: "done" });
                   finishTask("done");
                 },
 
-                onClose: () => overlays.get(originalSrc)?.ui?.remove(),
+                onClose: () => overlays.get(imgElement)?.ui?.remove(),
               },
             }),
 
           onRemove: (app) => {
             finishTask("closed");
+            document.dispatchEvent(new CustomEvent("lmt:task-status-event", { detail: { remove: true, taskId: task.id } }));
             if (app) unmount(app);
 
-            overlays.delete(originalSrc);
+            overlays.delete(imgElement);
             inpaintedSrcCache.delete(src); // Clear inpainted cache when overlay closes
             for (const [key, value] of translatedSrcMap) {
               if (value === originalSrc) translatedSrcMap.delete(key);
             }
-            // LMT-only registry: idle so pill/queue can retrigger after close/error
-            // Use pendingCacheKey if known, else just bySrc
+            // LMT-only registry: idle so the menu command/queue can retrigger after close/error
+            // Use pendingCacheKey if known, else just the element
             try {
-              Registry.markIdle(originalSrc, pendingCacheKey);
+              Registry.markIdle(originalSrc, pendingCacheKey, imgElement);
             } catch {
-              Registry.markIdle(originalSrc);
+              Registry.markIdle(originalSrc, undefined, imgElement);
             }
 
             document.dispatchEvent(new CustomEvent("lmt:mode-change"));
@@ -878,72 +949,32 @@ export default defineContentScript({
             else wrapper.remove();
           },
         }).then((ui) => {
-          overlays.set(originalSrc, { ui, wrapper });
+          overlays.set(imgElement, { ui, wrapper });
           ui.mount();
 
           styleObserver.observe(imgElement, {
             attributes: true,
             attributeFilter: ["style"],
           });
-          domObserver.observe(wrapper.parentElement ?? document.body, {
-            childList: true,
-            subtree: true,
-          });
+          // The observer that re-attaches a re-created picture finds it by address. With the same address on the page
+          // twice it could move the other copy into this wrapper, so it stays off for such a picture.
+          const sameAddress = Array.from(document.querySelectorAll<HTMLImageElement>("img")).filter((el) => el.src === originalSrc || el.getAttribute("src") === originalSrc);
+          if (sameAddress.length <= 1) {
+            domObserver.observe(wrapper.parentElement ?? document.body, {
+              childList: true,
+              subtree: true,
+            });
+          }
         });
     }
 
-    // ── Auto-Translate Engine (owns the unified queue) ────────────────────
-    // Created before the pill so manual clicks enqueue through the same
-    // limiter: slider cap when auto is ON, absolute 3 when OFF.
-    const autoTranslator = new AutoTranslateOrchestrator();
-    autoTranslator.init(startTranslationPipeline);
-    ctx.onInvalidated(() => autoTranslator.destroy());
-
-    // ── Floating Hover Trigger ──────────────────────────────────────────
-    // Indirect hover mapping (descendant / beneath-cursor) is gated on the
-    // active rule's reader container so episode cards and nav chrome on list
-    // pages never summon the pill.
-    const pillRule = await resolveActiveSiteRule();
+    // ── Status bar: one line per task, at the visible edge of its picture ───────
     createShadowRootUi(ctx, {
-      name: "lmt-floating-trigger",
+      name: "lmt-task-status",
       position: "inline",
       anchor: "body",
       append: "last",
-      onMount: (uiContainer) =>
-        mount(FloatingTrigger, {
-          target: uiContainer,
-          props: {
-            onTranslate: (img: MangaTargetElement) => {
-              autoTranslator.enqueueManual(img);
-            },
-            getOverlayMode: (img: MangaTargetElement) => {
-              const raw = getElementSrc(img);
-              const originalSrc = translatedSrcMap.get(srcKey(raw)) ?? raw;
-              const overlay = overlays.get(originalSrc);
-              if (!overlay) return "idle";
-              const mode = overlay.wrapper.getAttribute("data-lmt-mode");
-              if (mode === "results") return "translated";
-              if (mode === "loading") return "translating";
-              return "idle";
-            },
-            getOverlayProgress: (img: MangaTargetElement) => {
-              const raw = getElementSrc(img);
-              const originalSrc = translatedSrcMap.get(srcKey(raw)) ?? raw;
-              const overlay = overlays.get(originalSrc);
-              return (
-                overlay?.wrapper.getAttribute("data-lmt-progress") ??
-                "翻译中…"
-              );
-            },
-            isSameSource: (img: MangaTargetElement, src: string) => {
-              const raw = getElementSrc(img);
-              const originalSrc = translatedSrcMap.get(srcKey(raw)) ?? raw;
-              return originalSrc === src || raw === src;
-            },
-            readerContainerSelector: pillRule.containerSelector ?? null,
-            pillPosition: pillRule.pillPosition,
-          },
-        }),
+      onMount: (uiContainer) => mount(TaskStatusBar, { target: uiContainer }),
       onRemove: (app) => {
         if (app) unmount(app);
       },
@@ -951,38 +982,117 @@ export default defineContentScript({
       ui.mount();
     });
 
-    // Remember what the user right-clicked: when two images share a URL, the menu command targets this one.
-    let lastContextTarget: Element | null = null;
-    document.addEventListener(
-      "contextmenu",
-      (event) => {
-        lastContextTarget = event.target instanceof Element ? event.target : null;
+    // ── Auto-Translate Engine (owns the unified queue) ────────────────────
+    // Manual menu commands enqueue through the same limiter: slider cap when auto is ON, absolute 3 when OFF.
+    const autoTranslator = new AutoTranslateOrchestrator();
+    autoTranslator.init(startTranslationPipeline, {
+      onQueued: (img, manual) => {
+        // The line starts when the picture joins the queue, so a picture that waits for a free slot says so.
+        const task = beginTask(img, manual ? "manual" : (originHint ?? "auto"));
+        emitStatus(task, { type: "start", phase: "queued" });
       },
-      true,
-    );
+    });
+    ctx.onInvalidated(() => autoTranslator.destroy());
+
+    // ── Right-click memory ──────────────────────────────────────────────
+    // Where the user pressed the right button decides which picture the menu command means: the browser reports an
+    // address only for a plain <img>, not for a transparent flip layer, a canvas, a linked picture or a repeated one.
+    const OWN_UI = "lmt-overlay, lmt-sidebar, lmt-task-status";
+    const targetEnv: TargetEnv = {
+      elementsAt: (x, y) => document.elementsFromPoint(x, y),
+      qualifies: meetsPageSize,
+      qualifiesBeneath: meetsBeneathSize,
+      isOwnUi: (el) => el.closest(OWN_UI) !== null,
+      originalOfOverlay: (el) => {
+        const host = el.closest("lmt-overlay");
+        const wrapper = host?.parentElement;
+        return wrapper?.querySelector(":scope > img, :scope > canvas") ?? null;
+      },
+    };
+    let lastContext: ContextRecord | null = null;
+    const noteRightClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const resolved = resolveContextTarget(target, { x: event.clientX, y: event.clientY }, targetEnv);
+      lastContext = { at: performance.now(), x: event.clientX, y: event.clientY, pageUrl: window.location.href, target, resolved };
+      // The background shows or hides the menu entry to match. Chrome may build the menu before this arrives.
+      browser.runtime.sendMessage({ type: MSG_CONTEXT_TARGET, hasTarget: resolved !== null }).catch(() => {});
+    };
+    // The window, in the capture phase: readers that stop events on the document or on the picture still get seen.
+    // The button press comes before the menu opens, which gives the background a head start.
+    window.addEventListener("contextmenu", noteRightClick, true);
+    window.addEventListener("mousedown", (event) => event.button === 2 && noteRightClick(event), true);
+
+    const showNotice = (text: string) => {
+      const x = lastContext?.x ?? window.innerWidth / 2;
+      const y = lastContext?.y ?? window.innerHeight / 2;
+      document.dispatchEvent(new CustomEvent("lmt:task-notice", { detail: { x, y, text } }));
+    };
+
+    /** Starts a menu-chosen picture. A picture that is already running or done only gets a short note. */
+    function translateByHand(el: MangaTargetElement, clickedAt: number | undefined) {
+      const src = getElementSrc(el);
+      const status = src ? Registry.getStatus(src, el) : "idle";
+      if (status === "done") {
+        showNotice("这张图已经翻译过了");
+        return;
+      }
+      if (status === "pending") {
+        showNotice("这张图正在翻译");
+        return;
+      }
+      const task = beginTask(el, "manual", clickedAt);
+      task.origin = "manual";
+      autoTranslator.enqueueManual(el);
+    }
+
+    // The status bar's retry button. A failed run may have left its overlay (with the error note) on the picture; it goes first.
+    document.addEventListener("lmt:task-retry", (event) => {
+      const taskId = (event as CustomEvent<{ taskId?: string }>).detail?.taskId;
+      const found = [...document.querySelectorAll<MangaTargetElement>("img, canvas")].find((el) => taskCtx.get(el)?.id === taskId);
+      if (!found) return;
+      overlays.get(found)?.ui?.remove();
+      translateByHand(found, undefined);
+    });
 
     browser.runtime.onMessage.addListener(async (msg, _, sendResponse) => {
-      // Right-click menu (manual fallback when auto-detection missed an image).
+      // Right-click menu commands.
       if (isContextTranslateMessage(msg)) {
         if (msg.type === MSG_CONTEXT_TRANSLATE_PAGE) {
-          const count = await autoTranslator.enqueueAllQualifying();
-          if (count === 0) console.warn("RawReader: no loaded images found on this page to translate");
+          originHint = "page";
+          try {
+            const count = await autoTranslator.enqueueAllQualifying();
+            if (count === 0) {
+              console.warn("RawReader: no loaded images found on this page to translate");
+              showNotice("这一页没有找到可翻译的图片");
+            }
+          } finally {
+            originHint = null;
+          }
           return;
         }
-        const clicked = lastContextTarget?.closest("img") ?? null;
-        const images = document.querySelectorAll<HTMLImageElement>("img");
-        const target = findImageForSrcUrl(images, msg.data.srcUrl, window.location.href, clicked);
-        if (!target) {
-          console.warn("RawReader: could not find the image for the right-clicked URL on this page");
+        const srcUrl = msg.data.srcUrl;
+        const picked = pickForCommand(
+          lastContext,
+          window.location.href,
+          (el) => document.body.contains(el),
+          srcUrl,
+          (el) => srcUrl !== undefined && el.tagName === "IMG" && matchRank(el as HTMLImageElement, srcUrl, window.location.href) !== null,
+          (preferred) =>
+            srcUrl === undefined
+              ? null
+              : findImageForSrcUrl(
+                  document.querySelectorAll<HTMLImageElement>("img"),
+                  srcUrl,
+                  window.location.href,
+                  preferred?.tagName === "IMG" ? (preferred as HTMLImageElement) : (preferred?.closest("img") ?? null),
+                ),
+        );
+        if (!picked.ok) {
+          console.warn(`RawReader: no comic picture found for the right-click (${picked.reason})`);
+          showNotice("这里没找到漫画图片");
           return;
         }
-        taskMeta.set(target, {
-          origin: "manual",
-          receivedAt: performance.now(),
-          receivedWall: Date.now(),
-          clickedAt: msg.data.clickedAt,
-        });
-        autoTranslator.enqueueManual(target);
+        translateByHand(picked.element as MangaTargetElement, msg.data.clickedAt);
         return;
       }
       // Test Regex from popup settings to show live result

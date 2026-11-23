@@ -50,7 +50,7 @@ The options page has a **翻译后端** card with three choices:
 | 只用 RawReader | Never uses the API. |
 | 只用直连 API | Never probes the app. |
 
-In direct mode the extension sends the image you selected or hovered (shrunk to at most 3072 px on the long side and about 3.5 MB, re-encoded as JPEG only when needed) to the vision model in **one request**. The model finds the text, reads it and translates it into the target language already set in the extension (`sync:target-lang`, default Simplified Chinese), and answers with JSON:
+In direct mode the extension sends the image you right-clicked (shrunk to at most 3072 px on the long side and about 3.5 MB, re-encoded as JPEG only when needed) to the vision model in **one request**. The model finds the text, reads it and translates it into the target language already set in the extension (`sync:target-lang`, default Simplified Chinese), and answers with JSON:
 
 ```json
 {"items":[{"box":[x1,y1,x2,y2],"source":"original text","translation":"translated text"}]}
@@ -76,7 +76,9 @@ Privacy and permissions:
 - Image bytes leave the computer only in direct mode, and only to that API. With RawReader they stay on `127.0.0.1`.
 ## Use it
 
-Open a page with comic images, hover an image and use the floating button, or turn on **自动翻译** in the popup to translate images as they appear. The options page also holds the text style, inpainting and per-site rules.
+Open a page with comic images, right-click the picture and choose **翻译这张图片** (**翻译本页图片** does every loaded picture on the page), or turn on **自动翻译** in the popup to translate images as they appear. There is no button over the picture any more: a thin status line at the edge of the picture shows 正在取图 / 排队中 / 翻译中 / 完成, and on a failure the reason and a 重试 button. The options page also holds the text style, inpainting and per-site rules.
+
+The menu entry works on plain pictures, on pictures under a transparent page-flip layer or inside a link, on `<canvas>` readers and on a picture that appears twice (the one you clicked is translated). Not supported: pictures inside an iframe, and pages that block the right-click themselves.
 
 If a request fails the extension shows a Chinese message with the reason: app not running (open RawReader first), request refused (not the official extension build), or models not ready.
 

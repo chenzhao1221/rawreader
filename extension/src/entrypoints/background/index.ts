@@ -13,7 +13,7 @@ import { PriorityGate } from "@/lib/bridge/gate";
 import { installBridgeOriginRule } from "@/lib/bridge/origin";
 import type { BridgePingReply, BridgeTranslateMessage, BridgeTranslateReply } from "@/lib/bridge/protocol";
 import { DefaultConfig } from "@/lib/configs";
-import { CONTEXT_MENU_ITEMS, messageForMenuClick } from "@/lib/context-menu";
+import { CONTEXT_MENU_ITEMS, MENU_TRANSLATE_IMAGE, isContextTargetMessage, messageForMenuClick } from "@/lib/context-menu";
 import { translateDirect } from "@/lib/direct/client";
 import { NO_BACKEND_CODE } from "@/lib/direct/errors";
 import { createBrowserCodec } from "@/lib/direct/image-browser";
@@ -36,6 +36,8 @@ export default defineBackground(() => {
   let workerTasks = 0;
   // Records are appended one after the other, so two tabs finishing together cannot overwrite each other.
   let perfWrites: Promise<unknown> = Promise.resolve();
+  // Whether the "translate this image" entry is currently shown (it is created visible).
+  let menuImageVisible = true;
   const savePerfRecord = (record: PerfRecord) => {
     perfWrites = perfWrites
       .then(async () => storage.setItem(PERF_LOG_KEY, appendPerfRecord(await storage.getItem<PerfRecord[]>(PERF_LOG_KEY), record)))
@@ -214,6 +216,8 @@ export default defineBackground(() => {
       }
     });
   });
+  // The worker restarts at any time and forgets whether it hid the entry; show it again so both sides agree.
+  browser.contextMenus.update(MENU_TRANSLATE_IMAGE, { visible: true }, () => void browser.runtime.lastError);
   // The click is handled by the page's content script, which finds the <img> and runs the normal pipeline.
   browser.contextMenus.onClicked.addListener((info, tab) => {
     const message = messageForMenuClick(info);
@@ -266,6 +270,17 @@ export default defineBackground(() => {
     if (msg.type === "BRIDGE_TRANSLATE") {
       keepAliveWhile(bridgeTranslate(msg as BridgeTranslateMessage, sender.tab?.id).then(respond).catch(respondErr));
       return true;
+    }
+
+    // The page tells whether the right-click landed on a comic picture: the "translate this image" entry is shown or
+    // hidden to match. Chrome may build the menu before this arrives, so this is best effort: a command that finds
+    // no picture on the page only shows a short note and translates nothing.
+    if (isContextTargetMessage(msg)) {
+      if (msg.hasTarget !== menuImageVisible) {
+        menuImageVisible = msg.hasTarget;
+        browser.contextMenus.update(MENU_TRANSLATE_IMAGE, { visible: msg.hasTarget }, () => void browser.runtime.lastError);
+      }
+      return false;
     }
 
     // Timing record of one finished task (times and sizes only), written to the local ring log.

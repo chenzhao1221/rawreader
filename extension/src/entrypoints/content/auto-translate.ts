@@ -1,7 +1,6 @@
 // Portions ported from libre-manga-translator src/entrypoints/content/auto-translate.ts @ 1ddddc761ff18e6155a071ad3a3f603a836d7136,
 // AGPL-3.0-or-later, (C) 2026 Libre Manga Translator; modified by RawReader.
 import { resolveActiveSiteRule, type SiteRule } from "@/lib/adapters";
-import { storage } from "#imports";
 import * as Registry from "./translation-registry";
 import { getElementSrc, type MangaTargetElement } from "@/lib/canvas";
 
@@ -9,37 +8,63 @@ export type TranslateFn = (img: MangaTargetElement) => Promise<void>;
 
 export const MANUAL_CONCURRENCY = 3;
 
+/** The three classes the queue serves, most urgent first: a menu click, a picture on screen, everything else. */
+export type QueueClass = "manual" | "viewport" | "offscreen";
+
+const CLASS_RANK: Record<QueueClass, number> = { manual: 2, viewport: 1, offscreen: 0 };
+
+interface QueueEntry {
+  img: MangaTargetElement;
+  fn: TranslateFn;
+  manual: boolean;
+}
+
+/** True when any part of the element is on screen right now. */
+export function isOnScreen(el: Element): boolean {
+  const r = el.getBoundingClientRect();
+  return r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth && r.width > 0 && r.height > 0;
+}
+
+export interface EnqueueOptions {
+  /** The user asked for this picture (menu click). It goes before everything that was queued by itself. */
+  manual?: boolean;
+}
+
 export class AutoTranslateQueue {
-  private queue: { img: MangaTargetElement; fn: TranslateFn }[] = [];
+  private queue: QueueEntry[] = [];
   // Slots are held for the full pipeline lifetime and released on the
-  // registry `lmt:translation-status` done/idle events — NOT when
+  // registry `lmt:translation-status` done/partial/idle events — NOT when
   // translateFn settles (it resolves right after overlay mount, long
-  // before detect/translate/inpaint finish).
-  private inFlight = new Set<string>();
+  // before detect/translate/inpaint finish). Keyed by page element: two
+  // pictures with the same address are two tasks.
+  private inFlight = new Set<Element>();
   private concurrency = 1;
-  private seenKeys = new Set<string>();
+  private seen = new WeakSet<Element>();
   private lastTranslateFn: TranslateFn | null = null;
   private statusListener: ((e: Event) => void) | null = null;
+  /** Called when a picture joins the queue (the status bar starts its line here). */
+  onQueued: ((img: MangaTargetElement, manual: boolean) => void) | null = null;
+  /** Execution order, for tests and the measurements: element and class at the moment it was started. */
+  readonly started: { img: Element; class: QueueClass }[] = [];
 
   constructor() {
     this.statusListener = (e: Event) => {
-      const detail = (e as CustomEvent<{ src?: string; status?: string }>)
-        .detail;
-      if (!detail || !detail.src) return;
-      if (detail.status !== "done" && detail.status !== "idle") return;
-      const k = Registry.srcKeyOf(detail.src);
+      const detail = (e as CustomEvent<{ src?: string; owner?: Element; status?: string }>).detail;
+      if (!detail || !detail.owner) return;
+      if (detail.status !== "done" && detail.status !== "idle" && detail.status !== "partial") return;
+      const owner = detail.owner;
       if (detail.status === "idle") {
-        // Failure/close/error → allow retry via pill or rescan.
+        // Failure/close/error → allow retry via the menu or rescan.
         // Must run even when the slot was already released on `done`:
-        // done keeps seenKeys (anti-requeue while overlay is open), and the
+        // done keeps `seen` (anti-requeue while overlay is open), and the
         // close path fires idle after inFlight was deleted — without this,
-        // the pill's second click is silently dropped by seenKeys forever.
-        this.seenKeys.delete(k);
+        // the second click is silently dropped forever.
+        this.seen.delete(owner);
       }
-      if (!this.inFlight.has(k)) return;
-      this.inFlight.delete(k);
-      // done → keep seenKeys so finished pages never requeue.
-      if (this.lastTranslateFn) this.drain(this.lastTranslateFn);
+      if (!this.inFlight.has(owner)) return;
+      this.inFlight.delete(owner);
+      // done and partial → keep `seen` so finished pages never requeue.
+      if (this.lastTranslateFn) this.drain();
     };
     document.addEventListener("lmt:translation-status", this.statusListener);
   }
@@ -59,7 +84,7 @@ export class AutoTranslateQueue {
     if (clamped === this.concurrency) return;
     this.concurrency = clamped;
     if (this.lastTranslateFn && this.inFlight.size < this.concurrency && this.queue.length > 0) {
-      this.drain(this.lastTranslateFn);
+      this.drain();
     }
   }
 
@@ -68,83 +93,105 @@ export class AutoTranslateQueue {
   }
 
   evict(img: MangaTargetElement) {
-    const src = getElementSrc(img);
-    if (!src) return;
-    const k = Registry.srcKeyOf(src);
-    this.seenKeys.delete(k);
-    if (this.inFlight.delete(k) && this.lastTranslateFn) {
-      this.drain(this.lastTranslateFn);
+    this.seen.delete(img);
+    if (this.inFlight.delete(img) && this.lastTranslateFn) {
+      this.drain();
     }
   }
 
-  enqueue(
-    img: MangaTargetElement,
-    translateFn: (img: MangaTargetElement) => Promise<void>,
-  ) {
+  enqueue(img: MangaTargetElement, translateFn: TranslateFn, options: EnqueueOptions = {}) {
+    const manual = options.manual === true;
     const src = getElementSrc(img);
     if (!src) return;
-    const k = Registry.srcKeyOf(src);
-    if (
-      Registry.isPending(k) ||
-      this.inFlight.has(k) ||
-      Registry.getStatus(k) === "done" ||
-      this.seenKeys.has(k) ||
-      this.queue.some((e) => e.img === img)
-    )
+
+    // Already waiting: a menu click moves it to the front class, nothing else changes.
+    const waiting = this.queue.find((e) => e.img === img);
+    if (waiting) {
+      if (manual) waiting.manual = true;
       return;
-    this.seenKeys.add(k);
-    this.queue.push({ img, fn: translateFn });
+    }
+    const status = Registry.getStatus(src, img);
+    if (Registry.isPending(src, img) || this.inFlight.has(img) || status === "done") return;
+    // A page that came back only in part is retried by the menu click (the pipeline does the retry), never by the scanner.
+    if (status === "partial" && !manual) return;
+    if (!manual && this.seen.has(img)) return;
+
+    this.seen.add(img);
+    this.queue.push({ img, fn: translateFn, manual });
     this.lastTranslateFn = translateFn;
-    this.drain(translateFn);
+    this.onQueued?.(img, manual);
+    this.drain();
   }
 
-  private drain(translateFn: (img: MangaTargetElement) => Promise<void>) {
+  /** Class of a queued picture now: the screen is read when the slot frees up, not when the picture was queued. */
+  private classOf(entry: QueueEntry): QueueClass {
+    if (entry.manual) return "manual";
+    return isOnScreen(entry.img) ? "viewport" : "offscreen";
+  }
+
+  /** Index of the entry to start next: highest class first, first come first served inside a class. */
+  private pickNext(): number {
+    let best = -1;
+    let bestRank = -1;
+    for (let i = 0; i < this.queue.length; i++) {
+      const rank = CLASS_RANK[this.classOf(this.queue[i]!)];
+      if (rank > bestRank) {
+        best = i;
+        bestRank = rank;
+        if (rank === CLASS_RANK.manual) break;
+      }
+    }
+    return best;
+  }
+
+  private drain() {
     while (this.inFlight.size < this.concurrency && this.queue.length > 0) {
-      const entry = this.queue.shift()!;
+      const index = this.pickNext();
+      const entry = this.queue.splice(index, 1)[0]!;
       const targetImg = entry.img;
+      const translateFn = entry.fn;
       const src = getElementSrc(targetImg);
       if (!src || !document.body.contains(targetImg)) {
         // Skip detached images without consuming a slot
-        if (src) this.seenKeys.delete(Registry.srcKeyOf(src));
+        this.seen.delete(targetImg);
         continue;
       }
       // Strict registry guard at drain time as well (covers race between enqueue and drain)
-      const k = Registry.srcKeyOf(src);
-      if (Registry.isPending(k) || this.inFlight.has(k)) {
+      if (Registry.isPending(src, targetImg) || this.inFlight.has(targetImg)) {
         continue;
       }
-      if (Registry.getStatus(k) === "done") {
-        this.seenKeys.delete(k);
+      if (Registry.getStatus(src, targetImg) === "done") {
+        this.seen.delete(targetImg);
         continue;
       }
 
-      this.inFlight.add(k);
+      this.started.push({ img: targetImg, class: this.classOf(entry) });
+      if (this.started.length > 50) this.started.shift();
+      this.inFlight.add(targetImg);
       // Fire-and-forget: translateFn sets up its own overlay and async
       // flow. Failure or done signals through the registry event above.
       translateFn(targetImg)
         .then(() => {
-          if (!Registry.isPending(k) && Registry.getStatus(k) !== "done") {
-            this.inFlight.delete(k);
-            this.seenKeys.delete(k);
-            Registry.markIdle(src);
-            if (this.lastTranslateFn) this.drain(this.lastTranslateFn);
+          const status = Registry.getStatus(src, targetImg);
+          if (status !== "pending" && status !== "done" && status !== "partial") {
+            this.inFlight.delete(targetImg);
+            this.seen.delete(targetImg);
+            Registry.markIdle(src, undefined, targetImg);
+            this.drain();
           }
         })
         .catch((err) => {
           console.warn("LMT: auto-translate task failed:", err);
-          this.inFlight.delete(k);
-          this.seenKeys.delete(k);
-          Registry.markIdle(src);
-          if (this.lastTranslateFn) this.drain(this.lastTranslateFn);
+          this.inFlight.delete(targetImg);
+          this.seen.delete(targetImg);
+          Registry.markIdle(src, undefined, targetImg);
+          this.drain();
         });
     }
   }
 
   clear() {
-    for (const entry of this.queue) {
-      const src = getElementSrc(entry.img);
-      if (src) this.seenKeys.delete(Registry.srcKeyOf(src));
-    }
+    for (const entry of this.queue) this.seen.delete(entry.img);
     this.queue = [];
   }
 
@@ -168,8 +215,12 @@ export class AutoTranslateOrchestrator {
   private unwatchStorage: (() => void) | null = null;
   private unwatchConcurrency: (() => void) | null = null;
 
-  async init(translateFn: (img: MangaTargetElement) => Promise<void>) {
+  async init(
+    translateFn: (img: MangaTargetElement) => Promise<void>,
+    hooks: { onQueued?: (img: MangaTargetElement, manual: boolean) => void } = {},
+  ) {
     this.translateFn = translateFn;
+    this.queue.onQueued = hooks.onQueued ?? null;
 
     await this.applyCap();
     const initialEnabled =
@@ -201,10 +252,10 @@ export class AutoTranslateOrchestrator {
     );
   }
 
-  /** Manual pill path: shares the same queue even when auto is off. */
+  /** Menu click on one picture: it goes before everything the queue picked up by itself. */
   enqueueManual(img: MangaTargetElement) {
     if (this.translateFn) {
-      this.queue.enqueue(img, this.translateFn);
+      this.queue.enqueue(img, this.translateFn, { manual: true });
     }
   }
 
@@ -233,7 +284,9 @@ export class AutoTranslateOrchestrator {
       this.isQualifyingImage(img),
     );
     ready.sort((a, b) => Math.abs(a.getBoundingClientRect().top) - Math.abs(b.getBoundingClientRect().top));
-    for (const img of ready) this.enqueueManual(img);
+    for (const img of ready) {
+      if (this.translateFn) this.queue.enqueue(img, this.translateFn);
+    }
     return ready.length;
   }
 
@@ -352,8 +405,7 @@ export class AutoTranslateOrchestrator {
     if (this.observedImages.has(img)) return;
     const src = getElementSrc(img);
     if (!src) return;
-    const k = Registry.srcKeyOf(src);
-    if (Registry.isPending(k) || Registry.getStatus(k) === "done") return;
+    if (Registry.isPending(src, img) || Registry.getStatus(src, img) === "done") return;
 
     const isReady =
       img instanceof HTMLCanvasElement
@@ -369,8 +421,8 @@ export class AutoTranslateOrchestrator {
       const onLoad = () => {
         img.removeEventListener("load", onLoad);
         if (!this.isEnabled) return;
-        const kk = Registry.srcKeyOf(getElementSrc(img));
-        if (Registry.isPending(kk) || Registry.getStatus(kk) === "done") return;
+        const loadedSrc = getElementSrc(img);
+        if (Registry.isPending(loadedSrc, img) || Registry.getStatus(loadedSrc, img) === "done") return;
         if (this.isQualifyingImage(img)) {
           this.observedImages.add(img);
           this.observer?.observe(img);

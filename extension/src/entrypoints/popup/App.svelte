@@ -181,7 +181,7 @@
           </label>
         </div>
         <span class="text-[11px] text-[var(--text-muted)] leading-tight">
-          {settings.autoTranslate ? `最多同时翻译 ${settings.autoTranslateConcurrency} 页` : "已关闭（悬停手动翻译）"}
+          {settings.autoTranslate ? `最多同时翻译 ${settings.autoTranslateConcurrency} 页` : "已关闭（右键图片手动翻译）"}
         </span>
       </div>
 
@@ -262,7 +262,7 @@
   </div>
 
   <footer class="px-3.5 py-2 border-t border-[var(--border-line)] shrink-0 flex items-center justify-between text-[11px] text-[var(--text-dim)] bg-[var(--bg-void)]">
-    <span class="truncate">将鼠标悬停在图片上即可翻译</span>
+    <span class="truncate">在漫画上点右键，选「翻译这张图片」</span>
     <span class="text-[var(--text-muted)] truncate max-w-[120px]">{seriesName}</span>
   </footer>
 </main>

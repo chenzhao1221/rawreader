@@ -446,9 +446,134 @@ function summarize(rows) {
   return lines.join("\n");
 }
 
-async function runChecks() {
-  console.log("page checks are added with the right-click step");
-  return 0;
+// ───────────────────────── page checks (--check) ─────────────────────────
+
+const STATE_JS = `(() => {
+  const bar = document.querySelector("lmt-task-status");
+  const lines = bar && bar.shadowRoot
+    ? [...bar.shadowRoot.querySelectorAll("[role=status]")].map((e) => { const r = e.getBoundingClientRect(); return { text: e.textContent.trim().replace(/\\s+/g, " "), phase: e.dataset.phase || "", left: Math.round(r.left), top: Math.round(r.top) }; })
+    : [];
+  const overlays = [...document.querySelectorAll("lmt-overlay")].map((h) => {
+    const own = h.parentElement && h.parentElement.querySelector(":scope > img, :scope > canvas");
+    return { imgId: own ? own.id : "", shown: !!(h.shadowRoot && h.shadowRoot.querySelector("img")) };
+  });
+  return { lines, overlays, trigger: !!document.querySelector("lmt-floating-trigger"), scrollY: Math.round(scrollY) };
+})()`;
+
+async function runChecks(ctx) {
+  const results = [];
+  const base = `http://127.0.0.1:${ctx.staticServer.port}`;
+  const check = (name, ok, detail = "") => {
+    results.push({ name, ok });
+    console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`);
+  };
+  const dir = path.join(profilesRoot, `check-${Date.now()}`);
+  const session = new Session(new Chrome(dir), ctx);
+
+  /** Polls the page state until `done(state)` is true, and returns every distinct status line text seen on the way. */
+  const watch = async (page, done, timeoutMs = 60000) => {
+    const texts = [];
+    const start = Date.now();
+    for (;;) {
+      const state = await session.pageEval(page, STATE_JS);
+      for (const line of state.lines) if (line.phase && texts[texts.length - 1] !== line.text) texts.push(line.text);
+      if (done(state)) return { state, texts };
+      if (Date.now() - start > timeoutMs) return { state, texts, timedOut: true };
+      await sleep(60);
+    }
+  };
+  const pointOf = (page, selector) =>
+    session.pageEval(page, `(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(Math.min(Math.max(r.top + 120, 60), innerHeight - 60)) }; })()`);
+
+  try {
+    await session.open();
+    await sleep(500);
+
+    // 1. Plain picture: no floating button, status line goes through the real stages, moving the mouse changes nothing.
+    {
+      const page = await session.openPage(`${base}/normal.html?v=check1`);
+      await sleep(300);
+      const point = await pointOf(page, "#page");
+      await session.rightClickAndTranslate(page, point, `${base}/img/page-1200x1700.png?v=check1`);
+      await session.chrome.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 5 }, page.sessionId);
+      const { state, texts, timedOut } = await watch(page, (s) => s.overlays.some((o) => o.shown));
+      check("plain picture: translated picture is shown", !timedOut && state.overlays.length === 1, texts.join(" > "));
+      check("plain picture: no floating translate button on the page", state.trigger === false);
+      check("plain picture: status line shows the stages in order", texts[0] === "排队中" || texts[0] === "正在取图", texts.join(" > "));
+      check("plain picture: status line says 翻译中 before the end", texts.includes("翻译中"), texts.join(" > "));
+      await sleep(1500);
+      const after = await session.pageEval(page, STATE_JS);
+      check("plain picture: status line is gone after 完成", after.lines.length === 0, JSON.stringify(after.lines));
+      await session.closePage(page);
+    }
+
+    // 2. Transparent flip layer (no address from the browser), a picture inside a link, and a click on nothing.
+    {
+      const page = await session.openPage(`${base}/overlay.html`);
+      await sleep(300);
+      const requestsBefore = ctx.mock.control.count;
+      const layered = await pointOf(page, "#layered");
+      await session.rightClickAndTranslate(page, layered, undefined, { sendSrc: false });
+      const first = await watch(page, (s) => s.overlays.some((o) => o.shown));
+      const owner = first.state.overlays.find((o) => o.shown);
+      check("flip layer: the picture under the transparent layer is translated", !first.timedOut && !!owner);
+      const wrapperParent = await session.pageEval(page, `(() => { const h = document.querySelector("lmt-overlay"); return h && h.parentElement && h.parentElement.parentElement ? h.parentElement.parentElement.id : ""; })()`);
+      check("flip layer: it is the one inside the layer's stage, not the linked one", wrapperParent === "layered", wrapperParent);
+
+      const noteBefore = ctx.mock.control.count;
+      await session.rightClickAndTranslate(page, { x: 20, y: 20 }, undefined, { sendSrc: false });
+      let note = "";
+      for (let i = 0; i < 20 && !note; i++) {
+        await sleep(100);
+        const s = await session.pageEval(page, STATE_JS);
+        note = s.lines.find((l) => l.phase === "")?.text ?? "";
+      }
+      check("no comic under the click: short note, nothing translated", note === "这里没找到漫画图片" && ctx.mock.control.count === noteBefore, note);
+
+      const linked = await pointOf(page, "#linked");
+      await session.rightClickAndTranslate(page, linked, `${base}/img/page-1200x1700.png?v=link`);
+      const second = await watch(page, (s) => s.overlays.filter((o) => o.shown).length >= 2);
+      check("link: the picture inside a link is translated too", !second.timedOut);
+      check("requests: one per picture, none for the click on nothing", ctx.mock.control.count - requestsBefore === 2, String(ctx.mock.control.count - requestsBefore));
+      await session.closePage(page);
+    }
+
+    // 3. Canvas reader: no address at all.
+    {
+      const page = await session.openPage(`${base}/canvas.html`);
+      await sleep(800);
+      const point = await pointOf(page, "#page");
+      await session.rightClickAndTranslate(page, point, undefined, { sendSrc: false });
+      const out = await watch(page, (s) => s.overlays.some((o) => o.shown));
+      check("canvas: the canvas is found by the click position and translated", !out.timedOut && out.state.overlays[0]?.imgId === "page");
+      await session.closePage(page);
+    }
+
+    // 4. The same picture address twice: the clicked copy is the one that is translated; both lines stay apart.
+    {
+      const page = await session.openPage(`${base}/dup.html`);
+      await sleep(300);
+      await session.pageEval(page, "window.scrollTo(0, 800)");
+      await sleep(200);
+      const second = await pointOf(page, "#second");
+      await session.rightClickAndTranslate(page, second, `${base}/img/page-1200x1700.png?v=same`);
+      const out = await watch(page, (s) => s.overlays.length >= 1 && s.overlays.some((o) => o.shown));
+      check("same address twice: right-click on the second translates the second", !out.timedOut && out.state.overlays.length === 1 && out.state.overlays[0].imgId === "second", JSON.stringify(out.state.overlays));
+      await sleep(1200);
+      const first = await pointOf(page, "#first");
+      await session.rightClickAndTranslate(page, first, `${base}/img/page-1200x1700.png?v=same`);
+      const both = await watch(page, (s) => s.overlays.filter((o) => o.shown).length >= 2);
+      const ids = both.state.overlays.map((o) => o.imgId).sort().join(",");
+      check("same address twice: the first can be translated afterwards, each has its own overlay", !both.timedOut && ids === "first,second", ids);
+      await session.closePage(page);
+    }
+  } finally {
+    await session.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  console.log(`\n${results.length - failed}/${results.length} checks passed`);
+  return failed ? 1 : 0;
 }
 
 // ───────────────────────── main ─────────────────────────

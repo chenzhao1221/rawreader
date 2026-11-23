@@ -4,19 +4,38 @@ import { DefaultConfig } from "@/lib/configs";
 import { getSiteRule } from "@/lib/adapters";
 import { quickHash, resolveImagePageIndex } from "./utils";
 import type { MangaTargetElement } from "@/lib/canvas";
-import { storage } from "#imports";
 
 /**
  * LMT-only, content-isolated translation registry.
- * Strict block: pending → any second request for same src/cacheKey returns immediately.
- * Error/crash → markIdle (delete) so pill or queue can retrigger.
+ * Strict block: pending → any second request for the same page element returns immediately.
+ * Error/crash → markIdle (delete) so the menu command or queue can retrigger.
  * No window.__LMT__ exposure — page world cannot see or bypass.
+ *
+ * Status is kept per page element (`owner`), not per picture address: a reader can show the same address twice
+ * and each of the two pictures is its own task. A call without an owner falls back to the address (older callers).
  */
 
-export type TranslationStatus = "idle" | "pending" | "done";
+export type TranslationStatus = "idle" | "pending" | "done" | "partial";
 
-const bySrc = new Map<string, TranslationStatus>(); // srcKey(originalSrc) → status
-const byCacheKey = new Map<string, TranslationStatus>(); // local:page-cache-… → status
+/** The element a status belongs to, or the picture address for a call that has no element. */
+export type Owner = object | undefined;
+
+const bySrc = new Map<string, TranslationStatus>(); // srcKey(originalSrc) → status (no owner)
+const byOwner = new WeakMap<object, TranslationStatus>();
+const byCacheKey = new Map<string, TranslationStatus>(); // `${local:page-cache-…}|${owner id}` → status
+
+let nextOwnerId = 1;
+const ownerIds = new WeakMap<object, number>();
+const ownerId = (owner: Owner): number => {
+  if (!owner) return 0;
+  let id = ownerIds.get(owner);
+  if (id === undefined) {
+    id = nextOwnerId++;
+    ownerIds.set(owner, id);
+  }
+  return id;
+};
+const cacheSlot = (cacheKey: string, owner: Owner): string => `${cacheKey}|${ownerId(owner)}`;
 
 export function srcKeyOf(src: string): string {
   return src.startsWith("data:") ? quickHash(src) : src;
@@ -34,73 +53,73 @@ export async function resolveCacheKey(
   return `local:page-cache-${targetLang}-${seriesName}-${chapterId}-p${resolvedPage}-${imgHash}`;
 }
 
-export function isPending(src: string): boolean {
-  return bySrc.get(srcKeyOf(src)) === "pending";
+export function getStatus(src: string, owner?: Owner): TranslationStatus {
+  return (owner ? byOwner.get(owner) : bySrc.get(srcKeyOf(src))) ?? "idle";
 }
 
-export function isDone(src: string): boolean {
-  return bySrc.get(srcKeyOf(src)) === "done";
+export function isPending(src: string, owner?: Owner): boolean {
+  return getStatus(src, owner) === "pending";
 }
 
-export function getStatus(src: string): TranslationStatus {
-  return bySrc.get(srcKeyOf(src)) ?? "idle";
+export function isDone(src: string, owner?: Owner): boolean {
+  return getStatus(src, owner) === "done";
 }
 
-export function getStatusByCacheKey(cacheKey: string): TranslationStatus {
-  return byCacheKey.get(cacheKey) ?? "idle";
+export function getStatusByCacheKey(cacheKey: string, owner?: Owner): TranslationStatus {
+  return byCacheKey.get(cacheSlot(cacheKey, owner)) ?? "idle";
 }
 
-export function markPending(src: string, cacheKey?: string): void {
-  const k = srcKeyOf(src);
-  bySrc.set(k, "pending");
-  if (cacheKey) byCacheKey.set(cacheKey, "pending");
+function setStatus(src: string, owner: Owner, status: TranslationStatus): void {
+  if (owner) byOwner.set(owner, status);
+  else bySrc.set(srcKeyOf(src), status);
+}
+
+function emit(src: string, cacheKey: string | undefined, owner: Owner, status: TranslationStatus): void {
   document.dispatchEvent(
     new CustomEvent("lmt:translation-status", {
-      detail: { src, cacheKey, status: "pending" as const },
+      detail: { src, cacheKey, owner, status },
     }),
   );
 }
 
-export function markDone(src: string, cacheKey?: string): void {
-  bySrc.set(srcKeyOf(src), "done");
-  if (cacheKey) {
-    byCacheKey.set(cacheKey, "done");
-  } else {
-    // Overlay calls markDone(originalSrc) without the full page-cache key
-    // (it has no img element to resolve the page index). Without this sweep
-    // the byCacheKey entry stays "pending" forever and the second-run guard
-    // (getStatusByCacheKey === "pending") deadlocks every retry. All keys
-    // for this src share the `-${imgHash}` suffix, so settle them together.
-    const suffix = `-${quickHash(src)}`;
-    for (const [key, status] of byCacheKey) {
-      if (status === "pending" && key.endsWith(suffix)) {
-        byCacheKey.set(key, "done");
-      }
-    }
+/** Moves every cache-key claim of this picture and owner that is still `from` to `to` (or drops it). */
+function settleCacheKeys(src: string, owner: Owner, from: TranslationStatus, to: TranslationStatus | null): void {
+  // Overlay calls without the full page-cache key (it has no img element to resolve the page index). Without this
+  // sweep the entry stays "pending" forever and the second-run guard deadlocks every retry. All keys for this src
+  // share the `-${imgHash}` suffix, so settle them together.
+  const suffix = `-${quickHash(src)}|${ownerId(owner)}`;
+  for (const [key, status] of [...byCacheKey]) {
+    if (!key.endsWith(suffix)) continue;
+    if (to === null) byCacheKey.delete(key);
+    else if (status === from) byCacheKey.set(key, to);
   }
-  document.dispatchEvent(
-    new CustomEvent("lmt:translation-status", {
-      detail: { src, cacheKey, status: "done" as const },
-    }),
-  );
 }
 
-export function markIdle(src: string, cacheKey?: string): void {
-  bySrc.delete(srcKeyOf(src));
-  if (cacheKey) {
-    byCacheKey.delete(cacheKey);
-  } else {
-    // Same leak as markDone: error/close paths without a key must still
-    // release the pending cache-key claim, otherwise the retry guard sees
-    // a stale "pending" and early-returns forever.
-    const suffix = `-${quickHash(src)}`;
-    for (const key of [...byCacheKey.keys()]) {
-      if (key.endsWith(suffix)) byCacheKey.delete(key);
-    }
-  }
-  document.dispatchEvent(
-    new CustomEvent("lmt:translation-status", {
-      detail: { src, cacheKey, status: "idle" as const },
-    }),
-  );
+export function markPending(src: string, cacheKey?: string, owner?: Owner): void {
+  setStatus(src, owner, "pending");
+  if (cacheKey) byCacheKey.set(cacheSlot(cacheKey, owner), "pending");
+  emit(src, cacheKey, owner, "pending");
+}
+
+export function markDone(src: string, cacheKey?: string, owner?: Owner): void {
+  setStatus(src, owner, "done");
+  if (cacheKey) byCacheKey.set(cacheSlot(cacheKey, owner), "done");
+  else settleCacheKeys(src, owner, "pending", "done");
+  emit(src, cacheKey, owner, "done");
+}
+
+/** The run is over but not every part came back. The queue lets its slot go and never re-queues it; no cache is written. */
+export function markPartial(src: string, cacheKey?: string, owner?: Owner): void {
+  setStatus(src, owner, "partial");
+  if (cacheKey) byCacheKey.set(cacheSlot(cacheKey, owner), "partial");
+  else settleCacheKeys(src, owner, "pending", "partial");
+  emit(src, cacheKey, owner, "partial");
+}
+
+export function markIdle(src: string, cacheKey?: string, owner?: Owner): void {
+  if (owner) byOwner.delete(owner);
+  else bySrc.delete(srcKeyOf(src));
+  if (cacheKey) byCacheKey.delete(cacheSlot(cacheKey, owner));
+  else settleCacheKeys(src, owner, "pending", null);
+  emit(src, cacheKey, owner, "idle");
 }
