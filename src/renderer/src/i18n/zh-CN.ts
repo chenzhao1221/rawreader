@@ -137,8 +137,7 @@ export const zhCN = {
   settings: {
     title: '设置',
     close: '关闭',
-    back: '返回阅读',
-    tabs: { engine: '翻译方式', models: '模型', servers: '服务', advanced: '阅读与网页', licenses: '开源许可', bridge: '浏览器插件', history: '阅读历史' },
+    tabs: { engine: '翻译方式', models: '模型', servers: '服务', advanced: '阅读与网页', licenses: '开源许可', bridge: '浏览器插件' },
     apply: '应用',
     saved: '已保存。',
     invalid: '参数无效，未保存。',

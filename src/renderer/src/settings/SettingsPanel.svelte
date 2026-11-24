@@ -11,7 +11,7 @@
 
   // The licence view is hidden: the notices ship in the installer (resources/licenses) and in the repository.
   // LicensesSection.svelte is kept so it can come back by adding 'licenses' here.
-  const tabs: SettingsTab[] = ['engine', 'models', 'advanced', 'servers', 'bridge', 'history']
+  const tabs: SettingsTab[] = ['engine', 'models', 'advanced', 'servers', 'bridge']
 
   /** 16px line icons, one per page. */
   const icons: Record<string, string> = {
@@ -20,7 +20,6 @@
     advanced: 'M2 4h7M12 4h2M2 8h2M7 8h7M2 12h9M14 12h0M10.5 2.5v3M5.5 6.5v3M12.5 10.5v3',
     servers: 'M2.5 3h11v4h-11zM2.5 9h11v4h-11zM5 5h.01M5 11h.01',
     bridge: 'M6 2.5v3M10 2.5v3M4 5.5h8v3a4 4 0 0 1-8 0v-3ZM8 12.5v1',
-    history: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM8 5v3.2l2.2 1.3',
   }
 </script>
 
@@ -33,11 +32,6 @@
         {t.settings.tabs[tab]}
       </button>
     {/each}
-    <span class="spacer"></span>
-    <button type="button" class="close" onclick={closeSettings}>
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
-      {t.settings.back}
-    </button>
   </div>
 
   <div class="content">
@@ -53,8 +47,6 @@
         <AdvancedSection />
       {:else if store.tab === 'bridge'}
         <BridgeTab />
-      {:else if store.tab === 'history'}
-        <HistoryTab />
       {/if}
     </div>
   </div>
@@ -63,11 +55,12 @@
 <style>
   .panel {
     display: grid;
-    grid-template-columns: 200px 1fr;
+    grid-template-columns: 150px 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1;
     width: 100%;
-    height: 100%;
     min-height: 0;
-    background: var(--bg);
+    background: var(--surface);
     color: var(--text);
     font-family: var(--font);
     font-size: var(--text-m);
@@ -76,12 +69,13 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: var(--gap-l) var(--gap-s);
-    background: var(--surface);
+    padding: var(--gap) var(--gap-s);
+    background: var(--surface-2);
     border-right: 1px solid var(--border);
+    overflow-y: auto;
   }
   h1 {
-    margin: 0 10px var(--gap);
+    margin: 0 10px var(--gap-s);
     font-size: var(--text-l);
     font-weight: 600;
   }
@@ -117,17 +111,12 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .spacer {
-    flex: 1;
-  }
   .content {
     min-height: 0;
     overflow: auto;
   }
   .page {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: var(--gap-xl) var(--gap-xl) 64px;
+    padding: var(--gap-l) var(--gap-l) var(--gap-xl);
   }
   .page-title {
     margin: 0 0 var(--gap-l);

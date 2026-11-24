@@ -19,7 +19,7 @@ import type {
 import { label, zhCN } from './i18n/zh-CN'
 import { resolveTheme } from '../../shared/theme'
 
-export type SettingsTab = 'engine' | 'models' | 'servers' | 'advanced' | 'licenses' | 'bridge' | 'history'
+export type SettingsTab = 'engine' | 'models' | 'servers' | 'advanced' | 'licenses' | 'bridge'
 
 export interface ShellStore {
   browse: BrowseState
@@ -32,9 +32,11 @@ export interface ShellStore {
   progress: PipelineProgress
   /** Transient message in the status bar (Simplified Chinese), or null. */
   message: string | null
-  /** Settings / first-run panel. While open, main hides the native browse view. */
-  panelOpen: boolean
-  /** The first-run wizard is showing instead of the settings tabs. */
+  /** Settings popover, hanging from the gear button. */
+  settingsOpen: boolean
+  /** Reading history popover, hanging from the clock button. */
+  historyOpen: boolean
+  /** The first-run wizard fills the content area. */
   wizardOpen: boolean
   /** CPU, RAM, free disk and GPUs, read once when the wizard first opens. */
   hardware: HardwareInfo | null
@@ -57,7 +59,8 @@ export const store: ShellStore = $state({
   llama: { ocr: null, translate: null },
   progress: { total: 0, done: 0, failed: 0, active: 0 },
   message: null,
-  panelOpen: false,
+  settingsOpen: false,
+  historyOpen: false,
   wizardOpen: false,
   hardware: null,
   tab: 'models',
@@ -105,7 +108,7 @@ export function initStore(onFocusAddress: () => void = () => {}): () => void {
       store.tabs = state
     }),
     api.on('shell:focus-address', () => onFocusAddress()),
-    api.on('history:show', () => openSettings('history')),
+    api.on('history:show', () => openHistory()),
     api.on('webtext:bar', (bar) => {
       store.webBar = bar
     }),
@@ -203,35 +206,81 @@ export async function setToggle(key: 'autoTranslate' | 'overlayVisible', value: 
 // Settings panel actions
 // ---------------------------------------------------------------------------
 
+/**
+ * Main hides the native browse view while a panel covers it. Only the change is sent, so repeated
+ * open or close calls do not repeat the IPC message.
+ */
+let browseCovered = false
+function syncBrowseVisibility(): void {
+  const covered = store.settingsOpen || store.historyOpen || store.wizardOpen
+  if (covered === browseCovered) return
+  browseCovered = covered
+  void window.rawreader.invoke('shell:panel-visibility', { open: covered })
+}
+
 export function openSettings(tab: SettingsTab = 'models'): void {
   store.tab = tab
-  store.wizardOpen = false
-  store.panelOpen = true
+  store.historyOpen = false
+  store.settingsOpen = true
   store.modelNotice = null
-  void window.rawreader.invoke('shell:panel-visibility', { open: true })
+  syncBrowseVisibility()
   if (tab === 'advanced') void refreshCache()
   if (tab === 'licenses') void loadLicenses()
 }
 
+export function toggleSettings(): void {
+  if (store.settingsOpen) closeSettings()
+  else openSettings()
+}
+
+export function closeSettings(): void {
+  store.settingsOpen = false
+  syncBrowseVisibility()
+}
+
+export function openHistory(): void {
+  store.settingsOpen = false
+  store.historyOpen = true
+  syncBrowseVisibility()
+}
+
+export function toggleHistory(): void {
+  if (store.historyOpen) closeHistory()
+  else openHistory()
+}
+
+export function closeHistory(): void {
+  store.historyOpen = false
+  syncBrowseVisibility()
+}
+
+/** Escape-style dismissal used when the user starts typing in the address bar. */
+export function closeOverlays(): void {
+  store.settingsOpen = false
+  store.historyOpen = false
+  store.wizardOpen = false
+  syncBrowseVisibility()
+}
+
 /** First-run wizard: hardware check, engine choice, then models or an API key. */
 export function openWizard(): void {
+  store.settingsOpen = false
+  store.historyOpen = false
   store.wizardOpen = true
-  store.panelOpen = true
   store.modelNotice = null
-  void window.rawreader.invoke('shell:panel-visibility', { open: true })
+  syncBrowseVisibility()
   void loadHardware()
+}
+
+export function closeWizard(): void {
+  store.wizardOpen = false
+  syncBrowseVisibility()
 }
 
 async function loadHardware(): Promise<void> {
   if (store.hardware) return
   const result = await window.rawreader.invoke('system:info')
   if (result.ok) store.hardware = result.value
-}
-
-export function closeSettings(): void {
-  store.panelOpen = false
-  store.wizardOpen = false
-  void window.rawreader.invoke('shell:panel-visibility', { open: false })
 }
 
 export function selectTab(tab: SettingsTab): void {

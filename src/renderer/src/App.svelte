@@ -2,15 +2,19 @@
   import { onMount } from 'svelte'
   import appIcon from './assets/app-icon.png'
   import { label, zhCN as t } from './i18n/zh-CN'
+  import HistoryTab from './settings/HistoryTab.svelte'
   import SettingsPanel from './settings/SettingsPanel.svelte'
   import SetupWizard from './setup/SetupWizard.svelte'
+  import Popover from './ui/Popover.svelte'
   import Toggle from './ui/Toggle.svelte'
-  import { activateTab, closeSettings, closeTab, go, initStore, navigate, newTab, openLogs, openSettings, setToggle, store, webBarAction } from './state.svelte'
+  import { activateTab, closeHistory, closeOverlays, closeSettings, closeTab, go, initStore, navigate, newTab, openLogs, setToggle, store, toggleHistory, toggleSettings, webBarAction } from './state.svelte'
 
   let address = $state('')
   let focused = $state(false)
   let addressError = $state<string | null>(null)
   let input: HTMLInputElement | undefined
+  let historyBtn = $state<HTMLButtonElement | undefined>()
+  let settingsBtn = $state<HTMLButtonElement | undefined>()
 
   const roles = ['ocr', 'translate'] as const
   const shortRole: Record<(typeof roles)[number], string> = { ocr: t.status.ocrShort, translate: t.status.translateShort }
@@ -22,7 +26,7 @@
 
   onMount(() =>
     initStore(() => {
-      if (store.panelOpen) closeSettings()
+      if (store.settingsOpen || store.historyOpen || store.wizardOpen) closeOverlays()
       input?.focus()
       input?.select()
     }),
@@ -169,23 +173,28 @@
       <Toggle label={t.toolbar.overlayVisible} checked={overlayVisible} onchange={(next) => void setToggle('overlayVisible', next)} />
     </span>
     <button
+      bind:this={historyBtn}
       type="button"
       class="icon-btn"
-      class:active={store.panelOpen && store.tab === 'history'}
+      class:active={store.historyOpen}
+      aria-haspopup="dialog"
+      aria-expanded={store.historyOpen}
       title={t.toolbar.history}
       aria-label={t.toolbar.history}
-      onclick={() => openSettings('history')}
+      onclick={toggleHistory}
     >
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 5v3.2l2.2 1.3" /></svg>
     </button>
     <button
+      bind:this={settingsBtn}
       type="button"
       class="icon-btn"
-      class:active={store.panelOpen}
-      aria-pressed={store.panelOpen}
+      class:active={store.settingsOpen}
+      aria-haspopup="dialog"
+      aria-expanded={store.settingsOpen}
       title={t.toolbar.settings}
       aria-label={t.toolbar.settings}
-      onclick={() => (store.panelOpen ? closeSettings() : openSettings())}
+      onclick={toggleSettings}
     >
       <svg viewBox="0 0 16 16" aria-hidden="true">
         <circle cx="8" cy="8" r="3.2" />
@@ -229,12 +238,8 @@
 
   <!-- The browse view is a native view laid over this area by the main process. -->
   <main class="content">
-    {#if store.panelOpen}
-      {#if store.wizardOpen}
-        <SetupWizard />
-      {:else}
-        <SettingsPanel />
-      {/if}
+    {#if store.wizardOpen}
+      <SetupWizard />
     {:else if store.browse.url === ''}
       <p class="hint">{t.browse.emptyHint}</p>
     {/if}
@@ -264,6 +269,21 @@
       <span class="title">{store.browse.title}</span>
     {/if}
   </footer>
+
+  {#if store.historyOpen}
+    <Popover anchor={historyBtn} label={t.toolbar.history} width="min(400px, calc(100vw - 16px))" onclose={closeHistory}>
+      <div class="pop-scroll">
+        <h2 class="pop-title">{t.toolbar.history}</h2>
+        <HistoryTab />
+      </div>
+    </Popover>
+  {/if}
+
+  {#if store.settingsOpen}
+    <Popover anchor={settingsBtn} label={t.settings.title} width="min(680px, calc(100vw - 16px))" onclose={closeSettings}>
+      <SettingsPanel />
+    </Popover>
+  {/if}
 </div>
 
 <style>
@@ -543,5 +563,17 @@
   }
   .message {
     color: var(--warn);
+  }
+
+  .pop-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--gap) var(--gap-l) var(--gap-l);
+  }
+  .pop-title {
+    margin: 0 0 var(--gap);
+    font-size: var(--text-l);
+    font-weight: 600;
   }
 </style>

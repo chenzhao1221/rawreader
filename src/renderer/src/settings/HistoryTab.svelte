@@ -4,7 +4,7 @@
   import type { HistoryGroupName } from '../../../shared/history-group'
   import type { HistoryEntry } from '../../../shared/ipc/contract'
   import { zhCN as t } from '../i18n/zh-CN'
-  import { closeSettings } from '../state.svelte'
+  import { closeHistory } from '../state.svelte'
 
   const PAGE = 100
   /** The list refreshes by itself, so a visit that the extension reports shows up while the page is open. */
@@ -54,7 +54,7 @@
 
   async function open(entry: HistoryEntry): Promise<void> {
     const result = await window.rawreader.invoke('tabs:new', { input: entry.url })
-    if (result.ok) closeSettings()
+    if (result.ok) closeHistory()
   }
 
   async function remove(entry: HistoryEntry): Promise<void> {
@@ -164,13 +164,14 @@
   }
   .bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--gap-s);
     margin-bottom: var(--gap);
   }
   .search {
-    flex: 1;
-    min-width: 120px;
+    flex: 1 1 160px;
+    min-width: 0;
   }
   .count {
     color: var(--text-dim);

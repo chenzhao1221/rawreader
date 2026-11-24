@@ -6,7 +6,7 @@
   import { TRANSLATOR_OPTIONS, isDownloadable } from '../../../shared/models/translators'
   import type { TranslatorId } from '../../../shared/models/translators'
   import { formatBytes, modelLabel, zhCN as t } from '../i18n/zh-CN'
-  import { closeSettings, modelsDownload, saveConfig, store } from '../state.svelte'
+  import { closeWizard, modelsDownload, saveConfig, store } from '../state.svelte'
   import Choice from '../ui/Choice.svelte'
   import Group from '../ui/Group.svelte'
   import Row from '../ui/Row.svelte'
@@ -170,12 +170,12 @@
 
   async function finish(): Promise<void> {
     await saveConfig({ ui: { setupDone: true } })
-    closeSettings()
+    closeWizard()
   }
 
   async function skip(): Promise<void> {
     await saveConfig({ ui: { setupDone: true } })
-    closeSettings()
+    closeWizard()
   }
 
   const roleName: Record<string, string> = {
