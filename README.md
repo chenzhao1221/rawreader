@@ -1,12 +1,16 @@
 # RawReader
 
-RawReader is a Windows-first desktop reader that translates raw manga, manhwa and webtoons into Simplified Chinese while you read them in a built-in browser. The page stays where it is; translated text is drawn over each speech bubble, and one toggle brings the original back. By default all detection, OCR and translation run on your own machine.
+RawReader is a local manga translator for Windows. Read manga, manhwa and webtoons in Simplified Chinese as you scroll. Translations appear over the speech bubbles, and you can switch back to the original artwork at any time.
 
-The app is built with Electron, Svelte 5 and TypeScript. The local engine uses two `llama-server` processes from llama.cpp: PaddleOCR-VL-1.5 for OCR and Index-Translate-2B for translation. A bundled RT-DETR detector finds bubbles and text boxes. You can also switch to a cloud engine: an OpenAI-compatible translation API, or Gemini doing OCR and translation in one request. Nothing is uploaded unless you choose one of those engines.
+**本地漫画翻译**：用 Windows 桌面阅读器或配套 Chrome 扩展看日漫、韩漫和条漫生肉。桌面端可在本机完成气泡检测、OCR 和简体中文翻译；扩展可连接桌面端，或调用你配置的视觉 API。
+
+[Build the Windows reader](#build-and-run-from-source) · [Set up the Chrome extension](#chrome-extension)
+
+Build from source on Windows x64 with Node.js 22.12+ and npm. For local translation, set up the model files described in the build guide. The Chrome extension loads unpacked from your own build.
+
+The desktop app uses Electron, Svelte 5 and TypeScript. Its local engine uses a bundled RT-DETR detector, PaddleOCR-VL-1.5 for OCR and Index-Translate-2B for translation, served by llama.cpp. In local mode, OCR and translation keep comic images and text on your computer. Optional cloud modes use a translation API or Gemini for both OCR and translation.
 
 A typical session looks like this: open an all-ages manga chapter on a site you already use, turn on auto-translate, and scroll. Bubbles are translated as they come into view; turn the overlay off whenever you want the untouched page.
-
-This repository is the source of the project. RawReader is developed in the open on GitHub; there is no separate installer download and no published set of binaries. You get the app by cloning the repository and building it, as described below.
 
 ## Features
 
