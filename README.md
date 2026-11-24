@@ -6,6 +6,15 @@ RawReader is a local manga translator for Windows. Read manga, manhwa and webtoo
 
 [Build the Windows reader](#build-and-run-from-source) · [Set up the Chrome extension](#chrome-extension)
 
+![The same Pepper & Carrot panels with RawReader’s Chinese overlay on the left and Japanese text on the right](docs/screenshots/before-after.jpg)
+
+<details>
+<summary>See a translated page in the desktop reader</summary>
+
+![Chinese dialogue displayed inside a speech bubble in the desktop reader](docs/screenshots/desktop-reader.jpg)
+
+</details>
+
 Build from source on Windows x64 with Node.js 22.12+ and npm. For local translation, set up the model files described in the build guide. The Chrome extension loads unpacked from your own build.
 
 The desktop app uses Electron, Svelte 5 and TypeScript. Its local engine uses a bundled RT-DETR detector, PaddleOCR-VL-1.5 for OCR and Index-Translate-2B for translation, served by llama.cpp. In local mode, OCR and translation keep comic images and text on your computer. Optional cloud modes use a translation API or Gemini for both OCR and translation.
@@ -32,6 +41,8 @@ A typical session looks like this: open an all-ages manga chapter on a site you 
 ## Chrome extension
 
 A Manifest V3 extension in `extension/` is part of this repository. It translates the comic images of the page you are reading, either through the RawReader desktop app on `127.0.0.1` (detection, OCR and translation run there) or by calling a vision API you configure directly. It adds two right-click entries, **翻译这张图片** and **翻译本页图片**.
+
+![The Chrome extension highlights individual Japanese speech bubbles for review](docs/screenshots/extension-editor.jpg)
 
 The extension is not published to any browser store. Load it unpacked from your own build:
 
@@ -132,6 +143,8 @@ RawReader is a reading and translation tool. It does not host, provide, bundle o
 You are responsible for the material you view and translate and for how you use the result. Make sure you have the right to access and translate that material, and follow the terms of the sites you visit. Do not use the app to bypass paywalls, DRM or other access controls. The project takes no position on, and accepts no liability for, content accessed by users.
 
 Translation output is generated automatically and can be wrong. It is not a substitute for a human translation.
+
+Screenshots show excerpts from [Pepper & Carrot, episode 11](https://www.peppercarrot.com/ja/webcomic-sources/ep11_The-Witches-of-Chaosah.html) by David Revoy, with Japanese translation by guruguru and contributions from Hồ Nhựt Châu. Comic material is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). RawReader overlays the Chinese dialogue shown here.
 
 ## Licence
 
