@@ -18,10 +18,12 @@ inclusion: always
 | Cache | better-sqlite3 (13.x) | Native; rebuilt for Electron by electron-builder |
 | Logging | electron-log (5.x) | Plus our own redaction filter |
 | Tests | Vitest | Pure logic is unit-tested; Electron APIs are mocked at module edges |
-| Packaging | electron-builder (26.x), NSIS target | Per-user, `oneClick: false` |
+| Packaging | electron-builder (26.x) | Two flavours: `full` (default) is a Windows `zip` with models under `resources/models`; `lite` is an NSIS installer with no model files. `RAWREADER_FLAVOR` selects it |
+| Cloud engines | `net.fetch` to Gemini `generateContent` or an OpenAI-compatible `/chat/completions` | Optional, user-selected. No vendor SDK; keys go through `safeStorage` |
+| Local bridge | `node:http` on `127.0.0.1`, ports 18793-18797 | On by default, no pairing code; only the pinned extension `Origin` is accepted |
 | Inference | llama.cpp `llama-server` build b12318, external binary | Vulkan bundled; CUDA 12.4 on demand; custom path allowed |
 
-Versions are those checked in the module plan (2026-11-13). Pin exact versions in `package.json` when the scaffold is created. Do not add a dependency that the module plan marks "not recommended" or "not needed" (for example, openai SDK, execa, tree-kill, electron-dl, `@huggingface/hub`).
+Versions are those checked in the module plan (2026-11-13) and are pinned in `package.json`. Do not add a dependency that the module plan marks "not recommended" or "not needed" (for example, openai SDK, execa, tree-kill, electron-dl, `@huggingface/hub`).
 
 ## Dependency policy
 
@@ -47,7 +49,7 @@ The user's proxy traffic is limited. Use domestic mirrors by default.
 
 ## Local dev resources (read-only, never copy or redownload)
 
-All paths are relative to the repo root (`manga-lab/app`). They are wired through `dev.config.json`; see `design.md`.
+All paths are relative to the repo root (`manga-lab/app-directapi`). They are wired through `dev.config.json`; see `design.md`.
 
 | Role | Path |
 |---|---|
@@ -66,19 +68,29 @@ Do not modify anything under `../libre-manga-translator`, `../ocr-vl-test`, `../
 - Default flags (all values come from config):
   - OCR (port 18791): `-m PaddleOCR-VL-1.5.gguf --mmproj PaddleOCR-VL-1.5-mmproj.gguf --host 127.0.0.1 --port 18791 --ctx-size 4096 -np 1 -ngl 99`
   - Translation (port 18792): `-m Index-Translate-2B.Q4_K_M.gguf --host 127.0.0.1 --port 18792 --temp 0 -ngl 99 --ctx-size 8192 -np 1 --flash-attn on --reasoning off --alias Index-Translate-2B`
-- Measured: about 0.1 s per bubble for translation; translation adds about 1.48 GB VRAM. Combined OCR + translation VRAM is not yet measured (WorkBuddy S0), so ports, ctx, `-ngl`, `-np` and model paths stay configurable.
+- Measured on Windows with an AMD Radeon RX 7700 XT (12 GB, Vulkan build, ctx 4096 / 8192, `-np 1 -ngl 99`); all numbers come from `../wb-tests/REPORT.md`:
+  - Translation alone: about 0.104 s per bubble in steady state; the process holds about 1447 MiB dedicated VRAM and the adapter rises by about 1482 MiB. OCR alone adds about 1748 MiB.
+  - OCR and translation loaded together: idle 5770 MiB, both loaded 8948 MiB (+3178 MiB over idle), peak 9254 MiB on the 12 GB card. Steady state is about 0.107 s per bubble for translation and 0.182 s per image for OCR. The "10 bubbles within 5 s" target is judged met from these per-bubble numbers; there is no page-level end-to-end timing.
+  - Ports, ctx, `-ngl`, `-np` and model paths stay configurable for cards with less VRAM.
 - Kill only a PID the app spawned and recorded: `taskkill /PID <pid> /T /F`. Never kill by image name (`/IM` is forbidden). PIDs are validated as positive integers before use.
 - Orphan cleanup at startup uses the pid file `{pid, startTime, exePath}` and kills only when all three match a live process.
+
+## Cloud translation and the extension bridge
+
+- `translate.engine` picks who translates: `local` (both llama servers), `openai` (local OCR, remote translation) or `gemini` (bubbles cropped locally, sent to Gemini, nothing local loaded for OCR or translation).
+- Cloud clients are thin HTTP clients over an injected `fetch` (Electron `net.fetch` in main): `src/main/gemini/client.ts` for `generateContent`, and the `remote` option of `src/main/llm/chat.ts` for OpenAI-compatible translation. They sit behind the same pipeline stages as the local clients, so cache, history and overlay do not care which engine ran. Gemini caps a request at 20 crops and splits larger pages into several requests.
+- API keys live in `secrets.json` under userData, encrypted with Electron `safeStorage` (DPAPI on Windows). Keys never reach logs or error messages and are never written to the config file.
+- The bridge (`src/main/bridge/`) is a `node:http` server on `127.0.0.1` only. It is enabled by default; there is no pairing code. Every request must carry `Host: 127.0.0.1:<port>` and `Origin: chrome-extension://<pinned id>`; anything else gets 403, and CORS is granted to that origin alone. Routes are `/ping`, `/translate`, `/history` and `/history/open`. Disabling it is a settings switch, not a port change.
 
 ## Electron security rules
 
 - All renderers and views: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, `webSecurity: true`. No `remote`.
 - Only preloads talk to main, through the typed IPC contract in `src/shared/ipc/`. Main validates every payload with zod and checks the sender (shell vs browse view). Messages from the browse view are untrusted page-adjacent input.
 - The shell renderer has a strict CSP and loads only local files.
-- The browse view allows only `http:` and `https:` navigation. `window.open` is redirected into the same view. Permission requests are denied by default.
+- The browse view allows only `http:` and `https:` navigation. Links and plain `window.open(url)` become tabs; `window.open` with window features (a sign-in popup) becomes a guarded child window that follows the same rules. Permission requests are denied by default.
 - Secrets and tokens never go into logs; query strings are redacted.
 
-## Commands (after the scaffold exists)
+## Commands
 
 | Command | Purpose |
 |---|---|
@@ -86,9 +98,10 @@ Do not modify anything under `../libre-manga-translator`, `../ocr-vl-test`, `../
 | `npm run dev` | electron-vite dev with hot reload, using `dev.config.json` |
 | `npm run typecheck` | `tsc --noEmit` for node and web projects plus `svelte-check` |
 | `npm test` | Vitest, run once |
-| `npm run build` | Production build into `out/` |
-| `npm run dist:dir` | electron-builder unpacked Windows build (`--win --dir`) |
-| `npm run dist` | NSIS installer |
+| `npm run build` | Licence check plus electron-vite production build into `out/` |
+| `npm run dist:dir` | Unpacked Windows build under `release/<flavour>/win-unpacked` |
+| `npm run dist` | `full` package by default; `RAWREADER_FLAVOR=lite` builds the NSIS lite installer |
+| `cd extension && npm run build` | Builds the Chrome extension into `extension/.output/chrome-mv3` (separate npm package; the commands above do not include it) |
 
 A change is done only when `npm run typecheck`, `npm test` and `npm run build` all pass.
 

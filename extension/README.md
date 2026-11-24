@@ -1,6 +1,6 @@
 # RawReader Chrome extension
 
-A Manifest V3 Chrome extension that translates the comic images of the page you are reading and draws the Chinese translation over them. It has two backends: the RawReader desktop app on the same computer (detection, OCR and translation all run there, the extension only talks to `127.0.0.1`), or a vision model API you configure (Gemini, Zhipu GLM, SiliconFlow or any OpenAI-compatible service). There is no telemetry.
+A Manifest V3 Chrome extension that translates the comic images of the page you are reading and draws the Chinese translation over them. It has two backends: the RawReader desktop app on the same computer (detection, OCR and translation all run there, the extension only talks to `127.0.0.1`), or a vision model API you configure (Gemini, Zhipu GLM, SiliconFlow, Alibaba DashScope, Volcano Engine or any OpenAI-compatible service). There is no telemetry.
 
 It is a separate npm package (WXT + TypeScript + Svelte 5). The desktop app's own `npm run typecheck`, `npm test` and `npm run build` do not include it.
 
@@ -18,7 +18,7 @@ The build output is the unpacked extension:
 <repo>\extension\.output\chrome-mv3
 ```
 
-On this machine that is `C:\Users\chenxiao\.kiro\crew\workspace\manga-lab\app\extension\.output\chrome-mv3`.
+On this machine that is `C:\Users\chenxiao\.kiro\crew\workspace\manga-lab\app-directapi\extension\.output\chrome-mv3`.
 
 Other commands: `npm test` (Vitest, headless, no Chrome), `npm run typecheck` (svelte-check), `npm run dev` (WXT dev mode, starts a browser), `npm run zip` (a `.zip` in `.output/`).
 
@@ -28,6 +28,8 @@ Other commands: `npm test` (Vitest, headless, no Chrome), `npm run typecheck` (s
 2. Turn on **Developer mode** (top right).
 3. Click **Load unpacked** and choose the `.output\chrome-mv3` folder above.
 4. After a rebuild, click the reload icon on the extension card.
+
+The extension is not published in the Chrome Web Store or any other store; load your own build as above.
 
 The extension ID is fixed by the `key` in `extension-key.json` (ID `gpkjhmgphgimhomimgpjbdehibhenlce`). Do not remove the key: the app only accepts requests from this ID.
 
@@ -58,13 +60,15 @@ In direct mode the extension sends the image you right-clicked (shrunk to at mos
 
 `box` is on a 0-1000 scale relative to the image. The extension also accepts fractions, pixel values above 1000, Gemini's `box_2d` and a few other key names. If the answer is cut off, the complete items are kept. If it is not JSON at all, the whole answer is shown as one translation in a box at the top of the image. If you edit or draw regions, the model is asked to translate exactly those regions.
 
-Presets (all fields stay editable):
+Presets (all fields stay editable; the list is `PROVIDER_PRESETS` in `src/lib/direct/providers.ts`):
 
 | Provider | Base URL | Recommended models |
 |---|---|---|
 | Google Gemini | `https://generativelanguage.googleapis.com/v1beta` | `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.5-pro` |
-| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4v-flash` (free), `glm-4.1v-thinking-flash`, `glm-4v-plus-0111` |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.6v-flash`, `glm-4v-flash` (free), `glm-4.1v-thinking-flash`, `glm-4v-plus-0111` |
 | 硅基流动 | `https://api.siliconflow.cn/v1` | `Qwen/Qwen2.5-VL-32B-Instruct`, `Qwen/Qwen2.5-VL-72B-Instruct`, `Pro/Qwen/Qwen2.5-VL-7B-Instruct` |
+| 阿里云百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3-vl-flash`, `qwen3-vl-plus` |
+| 火山引擎豆包 | `https://ark.cn-beijing.volces.com/api/v3` | Any vision model; enter your endpoint ID (`ep-...`) or model ID |
 | 自定义 (OpenAI compatible) | your own, `https` (plain `http` only for `localhost` / `127.0.0.1`) | any model that accepts images |
 
 Gemini uses its native `generateContent` API; the others use `POST <base>/chat/completions`. Box accuracy varies by model: Gemini and Qwen-VL place boxes well, small free models less so. Very tall strips (more than twice as tall as wide) are cut into overlapping segments at their original resolution, one request per segment, and the boxes are mapped back to the whole image. Other images are shrunk to 3072 px on the long side. The output length is set in the options page under advanced settings (default 8192 tokens). If the service cuts an answer short, the overlay shows a note.
@@ -72,7 +76,7 @@ Gemini uses its native `generateContent` API; the others use `POST <base>/chat/c
 Privacy and permissions:
 
 - The API key is saved only in `chrome.storage.local` (not synced), is read only by the background worker and the options page, never goes into a log or a URL (Gemini gets it in the `x-goog-api-key` header, the others in `Authorization`), and is removed from error messages. It is sent only to the Base URL you configured.
-- The manifest lists the three preset API hosts in `host_permissions` and `https://*/*`, `http://127.0.0.1/*`, `http://localhost/*` in `optional_host_permissions`. For a custom Base URL the options page asks the browser for that one host when you click 保存. The manifest still has `<all_urls>` for fetching comic images from any site and for the app bridge, so in the current build the custom-host prompt is normally a no-op.
+- The manifest lists the five preset API hosts in `host_permissions` (Gemini, 智谱 GLM, 硅基流动, 阿里云百炼, 火山引擎) and `https://*/*`, `http://127.0.0.1/*`, `http://localhost/*` in `optional_host_permissions`. For a custom Base URL the options page asks the browser for that one host when you click 保存. The manifest still has `<all_urls>` for fetching comic images from any site and for the app bridge, so in the current build the custom-host prompt is normally a no-op.
 - Image bytes leave the computer only in direct mode, and only to that API. With RawReader they stay on `127.0.0.1`.
 ## Use it
 
@@ -92,7 +96,7 @@ Order of work, at the page queue and at the per-tab request gate: your menu clic
 
 ## Reading history
 
-The history lives in the RawReader desktop app (设置 > 阅读历史, or the clock button in the toolbar): list, search, open, delete one entry, 清空全部. The popup no longer has a list. Its button 在 RawReader 里看历史 asks the app (over the local bridge, `POST /history/open`) to show that page; with the app closed it says 请先打开 RawReader。
+The history lives in the RawReader desktop app. It is no longer a settings page: open the clock button in the toolbar, which shows the list (search, open, delete one entry, 清空全部). The popup has no list; its button 在 RawReader 里看历史 asks the app (over the local bridge, `POST /history/open`) to show that page, and with the app closed it says 请先打开 RawReader。
 
 - What is reported: address (without `#` and tracking parameters), title, series and chapter (only when a site rule gives them), time. Never a picture, the original text or a translation. The app stores it in its own SQLite file under its data folder; nothing is uploaded or synced. The extension does not use the browser's own history: the manifest has no `history` permission.
 - How: each visit goes into `chrome.storage.local` (key `history-pending`, at most 300 visits, one per address) and is sent to `POST /history` on `127.0.0.1` at once. It leaves the queue only after the app took it. With the app closed (or an older app that has no history routes) the visits wait and are sent when the app answers again: at the next visit, when the browser starts, when the worker wakes up, or when the popup checks the connection. A list kept in the extension by older versions (`reading-history`) is moved into the queue once and removed.
