@@ -47,3 +47,8 @@ Desktop.ini
 
 # NOTE: Do not ignore .kiro/ - Kiroween requires /.kiro in the repo and not gitignored.
 
+
+# Staged production node_modules for electron-builder (junction-safe, not committed)
+.pack-app/
+
+pack-app/

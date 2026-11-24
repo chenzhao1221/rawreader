@@ -1,4 +1,5 @@
 import identity from './app-identity.json' with { type: 'json' }
+import { prodNodeModuleFileSpecs, copyNativeModulesToUnpacked, assertNoNativesInAsar } from './scripts/prod-node-module-files.mjs'
 
 const flavor = process.env['RAWREADER_FLAVOR'] === 'lite' ? 'lite' : 'full'
 
@@ -24,6 +25,9 @@ export default {
   files: [
     'out/**',
     'package.json',
+    // Explicit production tree: app-directapi/node_modules is a junction into ../app/node_modules,
+    // and electron-builder's default walker drops those realpathed packages (@undefined).
+    ...prodNodeModuleFileSpecs(),
     '!out/preload/overlay-smoke.cjs',
     // Native modules ship binaries for every platform; keep Windows x64 only (sharp already installs only its own).
     '!**/node_modules/onnxruntime-node/bin/napi-v6/darwin/**',
@@ -36,11 +40,16 @@ export default {
   // sharp, onnxruntime-node and better-sqlite3 are N-API modules with prebuilt Windows binaries, so no rebuild
   // against Electron headers is needed (and none of it should reach for the network or a compiler).
   npmRebuild: false,
+  afterPack: async (context) => {
+    copyNativeModulesToUnpacked(context.appOutDir)
+    assertNoNativesInAsar(context.appOutDir)
+  },
   asarUnpack: [
     '**/node_modules/sharp/**',
     '**/node_modules/@img/**',
     '**/node_modules/onnxruntime-node/**',
     '**/node_modules/better-sqlite3/**',
+    '**/*.{node,dll}',
   ],
   // GGUF models are never bundled (R15.2). The Vulkan build comes from scripts/fetch-resources.mjs.
   // Only the llama-server runtime is shipped: the CLI, bench, quantize and RPC tools in the release zip are
