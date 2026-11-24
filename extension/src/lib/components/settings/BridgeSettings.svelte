@@ -27,7 +27,7 @@
 <div class="panel-card !p-2.5 flex flex-col gap-2">
   <span class="kicker is-cyan">连接 RawReader 应用</span>
   <p class="text-[11px] text-[var(--text-muted)] leading-snug">
-    不用设置端口或配对码。打开 RawReader 应用后，插件会自动找到它并连接，每次翻译前也会重新检测。
+    打开 RawReader 应用后插件会自动连接，无需手动配置。
   </p>
 
   <button type="button" onclick={check} disabled={checking} class="btn-ghost w-full justify-center py-1.5 text-xs font-bold">

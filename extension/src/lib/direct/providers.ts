@@ -24,7 +24,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     style: "gemini",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     models: ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"],
-    hint: "在 Google AI Studio 申请 API Key。国内网络通常需要代理。",
+    hint: "在 Google AI Studio 申请 API 密钥。国内网络通常需要代理。",
   },
   {
     id: "zhipu",
@@ -48,7 +48,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     style: "openai",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     models: ["qwen3-vl-flash", "qwen3-vl-plus"],
-    hint: "百炼的视觉模型名，例如 qwen3-vl-flash；需要在百炼控制台开通并获取 API Key。",
+    hint: "百炼的视觉模型名，例如 qwen3-vl-flash；需要在百炼控制台开通并获取 API 密钥。",
   },
   {
     id: "volcengine",
@@ -64,7 +64,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     style: "openai",
     baseUrl: "",
     models: [],
-    hint: "填写服务商的 Base URL（到 /v1 为止）、API Key 和支持图片输入的模型名。",
+    hint: "填写服务商的接口地址（到 /v1 为止）、API 密钥和支持图片输入的模型名。",
   },
 ];
 
@@ -124,19 +124,19 @@ export type BaseUrlCheck = { ok: true; url: string } | { ok: false; reason: stri
  */
 export function validateBaseUrl(raw: string): BaseUrlCheck {
   const text = raw.trim();
-  if (!text) return { ok: false, reason: "请填写 Base URL。" };
+  if (!text) return { ok: false, reason: "请填写接口地址。" };
   let url: URL;
   try {
     url = new URL(text);
   } catch {
-    return { ok: false, reason: "Base URL 格式不正确。" };
+    return { ok: false, reason: "接口地址格式不正确。" };
   }
   const loopback = LOOPBACK_HOSTS.has(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
-    return { ok: false, reason: "Base URL 必须以 https:// 开头（本机地址可以用 http://）。" };
+    return { ok: false, reason: "接口地址必须以 https:// 开头（本机地址可以用 http://）。" };
   }
-  if (url.username || url.password) return { ok: false, reason: "Base URL 里不能带用户名或密码。" };
-  if (url.search || url.hash) return { ok: false, reason: "Base URL 里不能带 ? 或 # 参数。" };
+  if (url.username || url.password) return { ok: false, reason: "接口地址里不能带用户名或密码。" };
+  if (url.search || url.hash) return { ok: false, reason: "接口地址里不能带 ? 或 # 参数。" };
   return { ok: true, url: `${url.origin}${url.pathname}`.replace(/\/+$/, "") };
 }
 

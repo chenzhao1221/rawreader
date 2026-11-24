@@ -226,7 +226,7 @@
         type="button"
         class="handle move"
         onmousedown={onDragStart(i, "move")}
-        title="拖动以移动文本框"
+        title="拖动文本框"
         aria-label="移动文本框"
       ></button>
     {/if}

@@ -161,7 +161,7 @@
       <button
         type="button"
         onmousedown={onDragStart}
-        title="拖动以移动工具栏"
+        title="拖动工具栏"
         class="h-8 px-1.5 inline-flex items-center justify-center rounded-[3px] text-[var(--text-muted)] hover:text-[var(--accent-cyan)] hover:bg-[var(--surface-panel)] transition-colors cursor-grab active:cursor-grabbing border border-transparent hover:border-[var(--border-line)] shrink-0"
         aria-label="拖动工具栏"
       >
@@ -254,7 +254,7 @@
       <button
         type="button"
         onmousedown={onDragStart}
-        title="拖动以移动工具栏"
+        title="拖动工具栏"
         class="w-7 h-7 inline-flex items-center justify-center p-0 rounded-[3px] text-[var(--text-muted)] hover:text-[var(--accent-cyan)] hover:bg-[var(--surface-panel)] transition-colors cursor-move border border-transparent hover:border-[var(--border-line)]"
       >
         <GripVertical size={14} />
@@ -316,7 +316,7 @@
       <button
         type="button"
         onmousedown={handleResultsDragStart}
-        title="拖动以移动工具栏"
+        title="拖动工具栏"
         aria-label="拖动工具栏"
         class="w-8 h-4 inline-flex items-center justify-center rounded-[3px] text-[var(--text-dim)] hover:text-[var(--accent-cyan)] cursor-grab active:cursor-grabbing transition-colors"
       >
@@ -327,7 +327,7 @@
       <button
         type="button"
         onclick={trapClick(onRefine)}
-        title="调整文本框（重新打开编辑器）"
+        title="调整文本框"
         class="w-8 h-8 inline-flex items-center justify-center rounded-[4px] p-0 shrink-0 text-[var(--text-muted)] hover:text-[var(--accent-amber)] hover:bg-[var(--surface-panel)] transition-colors cursor-pointer border border-transparent hover:border-[var(--border-line)]"
       >
         <BoxSelect size={16} />

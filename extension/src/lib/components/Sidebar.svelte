@@ -255,7 +255,7 @@
           <div class="space-y-3">
             <div class="panel-card !p-2 flex flex-col gap-1.5">
               <div class="flex items-center justify-between">
-                <span class="kicker">应用连接</span>
+                <span class="kicker">翻译状态</span>
                 <button
                   type="button"
                   onclick={checkConnection}
@@ -287,7 +287,7 @@
                 onclick={() => browser.runtime.sendMessage({ type: "OPEN_SETUP_TAB" })}
                 class="btn-ghost w-full justify-center py-1.5 text-xs font-bold"
               >
-                端口与配对码…
+                打开插件设置…
               </button>
             </div>
 
@@ -307,7 +307,7 @@
                 <input
                   type="text"
                   bind:value={seriesContext.seriesName}
-                  placeholder="作品标题（例如 One Piece）..."
+                  placeholder="作品标题（可选）..."
                   class="w-full bg-[var(--bg-void)] border border-[var(--border-faint)] rounded-lg p-2 text-xs outline-none focus:border-[var(--border-line)] placeholder:text-[var(--text-dim)]"
                 />
                 <textarea
@@ -342,10 +342,7 @@
             </div>
           {:else}
             <div class="space-y-3">
-              <div class="panel-card !p-2.5 flex flex-col gap-2">
-                <span class="kicker">网站规则</span>
-                <SiteRulesSettings bind:customRules={settings.customRules} />
-              </div>
+              <SiteRulesSettings bind:customRules={settings.customRules} />
 
               <DebugPanel compact onOpenLogs={() => (systemView = "logs")} />
             </div>
@@ -357,7 +354,7 @@
     <div class="px-3.5 py-2 border-t border-[var(--border-line)] flex items-center justify-between shrink-0 text-[11px] text-[var(--text-dim)] bg-[var(--bg-void)]">
       <span class="flex items-center gap-1.5 min-w-0">
         <span class="pulse-dot"></span>
-        <span class="truncate text-[var(--text-muted)]">RawReader 应用 · 本机运行</span>
+        <span class="truncate text-[var(--text-muted)]">RawReader 插件</span>
       </span>
       <span class="shrink-0 font-mono text-[10px]">v{manifestVersion}</span>
     </div>

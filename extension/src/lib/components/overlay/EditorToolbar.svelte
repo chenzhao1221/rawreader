@@ -173,7 +173,7 @@
     <button
       type="button"
       onclick={trapClick(() => onSelectLayer("cleaned"))}
-      title="显示擦字后的图片（已擦除原文，不含译文）"
+      title="查看擦字底图"
       class="w-8 h-8 flex items-center justify-center rounded-[3px] transition-all cursor-pointer border relative
              {activeLayer === 'cleaned'
                ? 'bg-[var(--accent-emerald-soft)] border-[var(--accent-emerald)] text-[var(--accent-emerald)] shadow-[0_0_10px_var(--accent-emerald-glow)] font-bold'
@@ -208,7 +208,7 @@
       <button
         type="button"
         onclick={trapClick(() => onSelectInpaintTool(activeInpaintTool === "mark-inpaint" ? "none" : "mark-inpaint"))}
-        title="框选需要擦字重绘的区域（拖动画矩形）"
+        title="拖动画框，标记需要擦字的区域"
         class="w-8 h-8 flex items-center justify-center rounded-[3px] transition-all cursor-pointer border
                {activeInpaintTool === 'mark-inpaint'
                  ? 'bg-amber-500/30 border-amber-400 text-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.4)]'
@@ -221,7 +221,7 @@
       <button
         type="button"
         onclick={trapClick(() => onSelectInpaintTool(activeInpaintTool === "restore-raw" ? "none" : "restore-raw"))}
-        title="框选需要还原为原图的区域（拖动画矩形）"
+        title="拖动画框，标记需要还原原图的区域"
         class="w-8 h-8 flex items-center justify-center rounded-[3px] transition-all cursor-pointer border
                {activeInpaintTool === 'restore-raw'
                  ? 'bg-rose-500/30 border-rose-400 text-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.4)]'

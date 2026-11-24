@@ -65,6 +65,27 @@ export function contextToBridge(context: Partial<SeriesContext> | undefined): Br
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/** Maps an English failure reason from the image pipeline to Simplified Chinese. Chinese text and `HTTP` status lines pass through. */
+export function describeImageFailure(raw: string): string {
+  const msg = raw.trim();
+  if (!msg) return "未知原因";
+  if (/[\u4e00-\u9fff]/.test(msg) || /^HTTP\s+\d+/i.test(msg)) return msg;
+  const lower = msg.toLowerCase();
+  if (lower.includes("timed out")) return "取图超时";
+  if (lower.includes("too large") || lower.includes("still above")) return "图片太大，无法处理";
+  if (lower.includes("empty response")) return "图片内容为空";
+  if (lower.includes("not an image")) return "返回内容不是图片（可能被网站拦截）";
+  if (lower.includes("could not be decoded")) return "图片无法解码";
+  if (lower.includes("unsupported image format")) return "不支持的图片格式";
+  if (lower.includes("cors")) return "网站限制跨域读取，且网络请求失败";
+  if (lower.includes("no answer from the background worker") || lower.includes("background worker is not available")) {
+    return "插件后台无响应";
+  }
+  if (lower.includes("no page element")) return "未能读取页面图片";
+  if (lower.includes("cannot be fetched")) return "不支持读取该图片地址";
+  return msg;
+}
+
 /** Simplified Chinese text for each stable error code of the bridge (the app sends English messages). */
 export function describeBridgeError(failure: BridgeFailure): string {
   // Direct API mode (and "no backend") use the same failure shape with their own codes.
@@ -91,9 +112,9 @@ export function describeBridgeError(failure: BridgeFailure): string {
     case "timeout":
       return "RawReader 没有及时回应。";
     case "image-unavailable":
-      return `图片下载失败：${failure.message || "未知原因"}`;
+      return `图片下载失败：${describeImageFailure(failure.message)}`;
     case "internal-error":
-      return `插件内部错误：${failure.message || "未知原因"}（详情见扩展的 service worker 控制台）`;
+      return `插件内部出错：${failure.message || "未知原因"}`;
     default:
       return `RawReader 返回了错误（${failure.code}）。`;
   }

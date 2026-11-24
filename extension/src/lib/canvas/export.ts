@@ -71,7 +71,7 @@ export function exportCanvasToJpeg(
   filename?: string,
 ): void {
   const link = document.createElement("a");
-  link.download = filename || `lmt-export-${Date.now()}.jpg`;
+  link.download = filename || `rawreader-export-${Date.now()}.jpg`;
   link.href = canvas.toDataURL("image/jpeg", quality);
   document.body.appendChild(link);
   link.click();

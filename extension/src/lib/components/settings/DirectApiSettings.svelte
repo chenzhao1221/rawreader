@@ -121,7 +121,7 @@
         return;
       }
       if (!isDirectConfigured(saved)) {
-        outcome = { kind: "error", text: "请先填写 Base URL、API Key 和模型名。" };
+        outcome = { kind: "error", text: "请先填写接口地址、API 密钥和模型名。" };
         return;
       }
       const result = await testDirect(saved);
@@ -162,7 +162,7 @@
     <div class="flex flex-col gap-1.5 border-t border-[var(--border-faint)] pt-2">
       <span class="text-[11px] font-bold">直连 API</span>
       <p class="text-[11px] text-[var(--text-muted)] leading-snug">
-        一次请求让视觉模型同时识别并翻译，目标语言用插件现有的设置。图片会发给你选的服务商；API Key 只保存在本机浏览器，不会上传到别处。
+        一次请求同时识别并翻译为简体中文。图片会发给所选服务商，API 密钥仅保存在本机浏览器。
       </p>
 
       <label class="space-y-1">
@@ -175,12 +175,12 @@
       </label>
 
       <label class="space-y-1">
-        <span class={label}>Base URL</span>
+        <span class={label}>接口地址</span>
         <input class={field} type="url" bind:value={baseUrl} placeholder="https://api.example.com/v1" spellcheck="false" autocomplete="off" />
       </label>
 
       <label class="space-y-1">
-        <span class={label}>API Key</span>
+        <span class={label}>API 密钥</span>
         <div class="flex gap-1.5">
           <input
             class={field}
@@ -212,7 +212,7 @@
           <span class={label}>输出上限（tokens）</span>
           <input class={field} type="number" min={MIN_MAX_TOKENS} max={MAX_MAX_TOKENS} step="256" bind:value={maxTokens} />
           <span class="text-[10px] text-[var(--text-muted)]">
-            长图或字多的页面需要更大的上限。服务商拒绝这个数值时，插件会自动改用更小的值重试一次。glm-4v-flash 最多 1024。
+            长图或字多时可调大；若服务商拒绝会自动降档重试（glm-4v-flash 上限 1024）。
           </span>
         </label>
         <label class="flex items-start gap-1.5 cursor-pointer">

@@ -296,7 +296,7 @@
 
       if (result.diagnostics?.untranslated?.includes(0)) {
         addToast(
-          `${label}：模型原样返回了原文，未翻译，结果未应用。`,
+          `${label}：未能翻出译文，未替换当前内容。`,
           "warn",
         );
         return;
@@ -603,7 +603,7 @@
     const echoed = result.diagnostics?.untranslated?.length ?? 0;
     if (echoed > 0) {
       addToast(
-        `有 ${echoed} 个文本框被模型原样返回了原文，未翻译。`,
+        `有 ${echoed} 个气泡未能翻出译文，已保留原文。`,
         "warn",
       );
     }
@@ -779,7 +779,7 @@
       siteSlug = "manga";
     }
 
-    const filename = `lmt-${siteSlug}-${layerType}-${Date.now()}.jpg`;
+    const filename = `rawreader-${siteSlug}-${layerType}-${Date.now()}.jpg`;
 
     const imageEl = new window.Image();
     imageEl.onload = () => {
@@ -1428,14 +1428,14 @@
             style:top="{box.y1 * liveScaleY}px"
             style:width="{(box.x2 - box.x1) * liveScaleX}px"
             style:height="{(box.y2 - box.y1) * liveScaleY}px"
-            title="已跳过擦字重绘：背景无法干净擦除，已保留原图。"
+            title="背景较复杂，已保留原图"
           >
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <div
               role="presentation"
               class="pointer-events-auto absolute -top-4 right-0 bg-rose-500/90 text-white text-[9px] font-mono px-1 rounded shadow"
-              title="已跳过擦字重绘：所有方案均未通过质量检查"
+              title="背景较复杂，已保留原图"
               onmousedown={(e) => e.stopPropagation()}
               onpointerdown={(e) => e.stopPropagation()}
               onclick={(e) => {

@@ -32,7 +32,7 @@ export function describeBackendStatus(reply: unknown): ConnectionStatus {
     default:
       return {
         kind: "warn",
-        text: reply.choice === "direct" ? "直连 API 还没有填写完整，请在选项页设置。" : "还没有可用的翻译后端：请先打开 RawReader，或在选项页填写直连 API。",
+        text: reply.choice === "direct" ? "直连 API 还没填完，请在插件设置中填写。" : "暂无可用后端：请先打开 RawReader，或在插件设置中填写直连 API。",
       };
   }
 }

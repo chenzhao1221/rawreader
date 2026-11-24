@@ -111,7 +111,7 @@
     type="button"
     class="pointer-events-auto p-0.5 -ml-1 text-[var(--text-dim)] hover:text-[var(--text-primary)] cursor-grab active:cursor-grabbing focus:outline-none"
     onmousedown={handleMouseDown}
-    title="拖动以移动原文条"
+    title="拖动原文条"
     aria-label="拖动原文条"
   >
     <GripVertical size={13} />
@@ -182,8 +182,8 @@
           <span class="font-semibold text-[var(--accent-cyan)]">重新翻译中…</span>
         {:else}
           <span class="font-semibold text-[var(--accent-cyan)]">用 AI 重新翻译</span>
-          <span class="text-[var(--text-muted)]">点击：重新识别气泡（OCR / 视觉）</span>
-          <span class="text-[var(--text-muted)]">Ctrl/⌘ + 点击：沿用已识别文字（跳过 OCR）</span>
+          <span class="text-[var(--text-muted)]">点击：重新识别并翻译</span>
+          <span class="text-[var(--text-muted)]">Ctrl/⌘ + 点击：按现有原文重翻</span>
         {/if}
       </div>
     </div>

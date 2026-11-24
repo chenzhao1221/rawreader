@@ -37,13 +37,13 @@ export function describeDirectError(failure: DirectFailure): string | null {
   const detail = failure.message ? `（${failure.message}）` : "";
   switch (failure.code) {
     case NO_BACKEND_CODE:
-      return "还没有可用的翻译后端：请先打开 RawReader 应用，或在插件选项页填写直连 API。";
+      return "还没有可用的翻译后端：请先打开 RawReader 应用，或在插件设置中填写直连 API。";
     case "direct-auth":
-      return `API Key 被拒绝，请检查 Key 是否正确、是否过期。${detail}`;
+      return `API 密钥被拒绝，请检查密钥是否正确或过期。${detail}`;
     case "direct-rate-limit":
       return `请求太频繁或额度用完了，请稍后再试。${detail}`;
     case "direct-not-found":
-      return `找不到这个接口或模型，请检查 Base URL 和模型名。${detail}`;
+      return `找不到这个接口或模型，请检查接口地址和模型名。${detail}`;
     case "direct-bad-request":
       return `服务商拒绝了这个请求，请确认模型支持图片输入。${detail}`;
     case "direct-image-too-large":
@@ -55,7 +55,7 @@ export function describeDirectError(failure: DirectFailure): string | null {
     case "direct-network":
       return "连不上服务商，请检查网络或代理。";
     case "direct-permission":
-      return "插件还没有访问这个地址的权限，请在选项页点“保存并测试”并允许。";
+      return "插件还没有访问这个地址的权限，请在插件设置里点“保存并测试”并允许。";
     case "direct-empty-response":
       return "模型没有返回内容。";
     case "direct-image":

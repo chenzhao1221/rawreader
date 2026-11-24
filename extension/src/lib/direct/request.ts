@@ -25,7 +25,7 @@ export function buildRequest(settings: DirectApiSettings, prompt: string, image:
   if (!base.ok) return { ok: false, reason: base.reason };
   const model = settings.model.trim();
   if (!model) return { ok: false, reason: "请填写模型名。" };
-  if (!settings.apiKey.trim()) return { ok: false, reason: "请填写 API Key。" };
+  if (!settings.apiKey.trim()) return { ok: false, reason: "请填写 API 密钥。" };
   const key = settings.apiKey.trim();
 
   if (apiStyleOf(settings) === "gemini") {

@@ -17,7 +17,7 @@
 
   function processFontFile(file: File) {
     if (!file.name.match(/\.(ttf|otf|woff|woff2)$/i)) {
-      alert("请上传 .ttf、.otf、.woff 或 .woff2 文件");
+      alert("请选择 .ttf、.otf、.woff 或 .woff2 字体文件");
       return;
     }
 
@@ -135,10 +135,10 @@
     >
       {#if fontUploading}
         <LoaderCircle size={15} class="animate-spin" />
-        <span class="text-xs">上传中…</span>
+        <span class="text-xs">读取中…</span>
       {:else}
         <Upload size={15} />
-        <span class="text-xs font-medium">拖入自定义字体</span>
+        <span class="text-xs font-medium">点击选择或拖入字体文件</span>
         <span class="text-[11px] text-[var(--text-dim)]">.ttf · .otf · .woff · .woff2</span>
       {/if}
 

@@ -81,6 +81,17 @@ describe("describeBridgeError", () => {
     expect(text).not.toContain("RawReader");
     expect(describeBridgeError({ code: "internal-error", message: "boom" })).toContain("boom");
   });
+
+  it("turns the image pipeline's English download reasons into Chinese", () => {
+    const cases: Array<[string, string]> = [
+      ["timed out", "图片下载失败：取图超时"],
+      ["the image is too large", "图片下载失败：图片太大，无法处理"],
+      ["Failed to fetch (blocked by the page's CORS policy, or a network error)", "图片下载失败：网站限制跨域读取，且网络请求失败"],
+    ];
+    for (const [message, text] of cases) {
+      expect(describeBridgeError({ code: "image-unavailable", message })).toBe(text);
+    }
+  });
 });
 
 const PING_BODY = { v: 1, app: "App", version: "1.2.3", ready: true, engine: "local" };

@@ -31,7 +31,7 @@ export const DefaultConfig = {
   minTranslations: 5, // number of translations per series before resetting context
 
   bundleFonts: [
-    { id: "system", label: "System", stack: "'Segoe UI', sans-serif" },
+    { id: "system", label: "系统默认", stack: "'Segoe UI', sans-serif" },
     { id: "noto", label: "Noto Sans", stack: "'Noto Sans', sans-serif" },
     { id: "bangers", label: "Bangers", stack: "'Bangers', cursive" },
     { id: "comic", label: "Comic Neue", stack: "'Comic Neue', cursive" },

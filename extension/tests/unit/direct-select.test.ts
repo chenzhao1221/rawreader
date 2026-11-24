@@ -38,8 +38,8 @@ describe("direct errors", () => {
   });
 
   it("describes direct codes in Chinese and leaves other codes alone", () => {
-    expect(describeDirectError({ code: "direct-auth", message: "HTTP 401" })).toContain("API Key");
-    expect(describeDirectError({ code: NO_BACKEND_CODE, message: "" })).toContain("选项页");
+    expect(describeDirectError({ code: "direct-auth", message: "HTTP 401" })).toContain("API 密钥");
+    expect(describeDirectError({ code: NO_BACKEND_CODE, message: "" })).toContain("插件设置");
     expect(describeDirectError({ code: "unreachable", message: "" })).toBeNull();
   });
 
@@ -85,7 +85,7 @@ describe("describeBackendStatus", () => {
   it("guides the user when nothing is available", () => {
     const s = describeBackendStatus({ backend: "none", choice: "auto", ping: { ok: false, error: { code: "unreachable", message: "" } }, direct: { ...direct, configured: false } });
     expect(s.kind).toBe("warn");
-    expect(s.text).toContain("选项页");
+    expect(s.text).toContain("插件设置");
   });
 
   it("falls back to the ping wording for an error reply", () => {

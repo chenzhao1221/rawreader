@@ -30,6 +30,8 @@
     recentHistory: [],
     translatedCount: 0,
   });
+  // Display-only: "Unknown Series" is a storage key and stays as it is in seriesName.
+  const displaySeriesName = $derived(!seriesName || seriesName === "Unknown Series" ? "未识别作品" : seriesName);
 
   let showContextDrawer = $state(false);
   // The reading history is in the RawReader app; the button asks the app to show it.
@@ -94,7 +96,7 @@
   async function handleResetSeriesContext() {
     if (
       !confirm(
-        `要重置“${seriesContext.seriesName || seriesName}”的作品上下文吗？\n\n这会清除用于保持翻译连贯的摘要、术语表和最近的页面记录，已缓存的页面会保留。`,
+        `要重置“${seriesContext.seriesName || displaySeriesName}”的作品上下文吗？\n\n这会清除用于保持翻译连贯的摘要、术语表和最近的页面记录，已缓存的页面会保留。`,
       )
     ) {
       return;
@@ -151,11 +153,11 @@
       <button
         type="button"
         onclick={openHistory}
-        title="在 RawReader 里打开阅读历史"
+        title="在 RawReader 中查看阅读历史"
         class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md cursor-pointer border border-[var(--border-line)] text-[var(--text-muted)] hover:text-[var(--accent-amber)]"
       >
         <HistoryIcon size={12} />
-        在 RawReader 里看历史
+        历史
       </button>
       <button
         type="button"
@@ -172,7 +174,7 @@
     <!-- Connection -->
     <section class="panel-card !p-2 flex flex-col gap-1.5">
       <div class="flex items-center justify-between">
-        <span class="kicker">应用连接</span>
+        <span class="kicker">翻译状态</span>
         <button
           type="button"
           onclick={checkConnection}
@@ -212,7 +214,7 @@
           </label>
         </div>
         <span class="text-[11px] text-[var(--text-muted)] leading-tight">
-          {settings.autoTranslate ? `最多同时翻译 ${settings.autoTranslateConcurrency} 页` : "已关闭（右键图片手动翻译）"}
+          {settings.autoTranslate ? `最多同时翻译 ${settings.autoTranslateConcurrency} 页` : "已关闭，右键图片可手动翻"}
         </span>
       </div>
 
@@ -233,7 +235,7 @@
         <div class="flex flex-col">
           <span class="text-xs font-medium">记录阅读历史</span>
           <span class="text-[11px] text-[var(--text-muted)] leading-tight">
-            {historyEnabled ? "翻译过的页面只报告给本机的 RawReader，在程序里查看" : "已关闭，不再报告页面"}
+            {historyEnabled ? "仅保存在本机 RawReader，不上传" : "已关闭，不再报告页面"}
           </span>
         </div>
         <label class="switch-cyber shrink-0">
@@ -246,7 +248,7 @@
         <div class="flex flex-col">
           <span class="text-xs font-medium">总是擦字重绘</span>
           <span class="text-[11px] text-[var(--text-muted)] leading-tight">
-            {settings.alwaysInpaint ? "质量检查未通过时仍强制擦字重绘" : "质量检查未通过时保持原样"}
+            {settings.alwaysInpaint ? "复杂背景也强制擦字（可能留痕）" : "复杂背景保留原图，避免擦花"}
           </span>
         </div>
         <label class="switch-cyber is-emerald shrink-0">
@@ -261,7 +263,7 @@
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-1.5 min-w-0">
           <span class="badge-cyber is-cyan shrink-0">{ruleId || "网站"}</span>
-          <span class="text-xs font-medium truncate">{seriesName}</span>
+          <span class="text-xs font-medium truncate">{displaySeriesName}</span>
         </div>
         <button
           type="button"
@@ -277,7 +279,7 @@
           <input
             type="text"
             bind:value={seriesContext.seriesName}
-            placeholder="自定义作品标题..."
+            placeholder="作品标题（可选）..."
             class="w-full bg-[var(--bg-void)] border border-[var(--border-faint)] rounded-lg px-2 py-1 text-xs outline-none focus:border-[var(--border-line)] placeholder:text-[var(--text-dim)]"
           />
           <textarea
@@ -307,6 +309,5 @@
 
   <footer class="px-3.5 py-2 border-t border-[var(--border-line)] shrink-0 flex items-center justify-between text-[11px] text-[var(--text-dim)] bg-[var(--bg-void)]">
     <span class="truncate">{historyNote || "在漫画上点右键，选「翻译这张图片」"}</span>
-    <span class="text-[var(--text-muted)] truncate max-w-[120px]">{seriesName}</span>
   </footer>
 </main>

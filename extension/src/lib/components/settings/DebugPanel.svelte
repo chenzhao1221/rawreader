@@ -117,7 +117,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `lmt-debug-logs-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `rawreader-debug-logs-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -188,6 +188,7 @@
 {/if}
 
 <!-- Timing records: times, sizes and task numbers only (no addresses, titles, images or text). -->
+{#if debugEnabled}
 <div class="panel-card !p-3 flex items-center justify-between gap-2">
   <div class="flex flex-col gap-0.5 min-w-0">
     <span class="text-[13px] font-medium text-[var(--text-primary)]">测速记录</span>
@@ -204,6 +205,7 @@
     </button>
   </div>
 </div>
+{/if}
 
 {#if listOpen}
 {#if onBack}
@@ -316,7 +318,7 @@
                 class="text-[var(--accent-amber)]"
                 title="输出与原文相同的文本框"
               >
-                {log.untranslated.length} 个回显
+                {log.untranslated.length} 个未翻
               </span>
             {/if}
             <span>{formatDuration(log.timing?.total)}</span>
@@ -390,13 +392,10 @@
               {#if log.inpaintStats}
                 <div
                   class="col-span-2 text-[10px] font-mono text-zinc-500"
-                  title="fill · denoise · lama · telea · rect-telea · declined · skipped"
+                  title="fill · denoise · telea · rect-telea · declined · skipped"
                 >
                   {log.inpaintStats.fill} fill ·
                   {log.inpaintStats.denoise} denoise ·
-                  {#if (log.inpaintStats as any).lama}
-                    {(log.inpaintStats as any).lama} lama ·
-                  {/if}
                   {log.inpaintStats.telea} telea ·
                   {log.inpaintStats.rectTelea} rect
                   {#if log.inpaintStats.declined}
@@ -410,55 +409,6 @@
               {#if log.inpaintError}
                 <div class="col-span-2 text-[10px] font-mono text-red-400 truncate" title="{log.inpaintError}">
                   擦字重绘错误：{log.inpaintError}
-                </div>
-              {/if}
-              {#if log.inpaintLamaError}
-                <div class="col-span-2 text-[10px] font-mono text-red-400 truncate" title="{log.inpaintLamaError}">
-                  LaMa 错误：{log.inpaintLamaError}
-                </div>
-              {/if}
-              {#if log.lamaStages}
-                <div
-                  class="col-span-2 text-[10px] font-mono text-zinc-500"
-                  title="LaMa 阶段（按文本框计）：模型已重绘 · 太小未交给模型 · 模型失败 · 未尝试（会话未就绪，或失败后未执行到）。未由模型重绘的文本框都走了快速回退流程。"
-                >
-                  LaMa: {log.lamaStages.painted} 已重绘 ·
-                  {log.lamaStages.skippedSize} 太小 ·
-                  <span class:text-red-400={log.lamaStages.failed > 0}>
-                    {log.lamaStages.failed} 失败
-                  </span>
-                  ·
-                  <span class:text-red-400={log.lamaStages.notAttempted > 0}>
-                    {log.lamaStages.notAttempted} 未尝试
-                  </span>
-                </div>
-              {/if}
-              {#if log.gate}
-                <div
-                  class="col-span-2 text-[10px] font-mono text-zinc-500"
-                  title="模式 · 已检查区域 · 被拦下区域 · 语言组"
-                >
-                  闸门：{log.gate.mode} · {log.gate.checked} 已检查 ·
-                  <span class:text-amber-500={log.gate.skipped > 0}>
-                    {log.gate.skipped} 已跳过
-                  </span>
-                  {#if log.gate.group}· {log.gate.group}{/if}
-                  {#if log.gate.groupSource === "fallback"}
-                    · <span class="text-amber-500">推测</span>
-                  {/if}
-                  {#if log.gate.unavailable}
-                    · <span class="text-red-400">模型不可用 - 仅文字</span>
-                  {/if}
-                </div>
-              {/if}
-              {#if log.langGroup}
-                <div>
-                  <span class="text-zinc-500 uppercase">语言组:</span> {log.langGroup}
-                  {#if log.langGroupFallback}
-                    <span class="text-amber-500" title="没有模型或检测结果给出语言组，此为推测值">
-                      推测
-                    </span>
-                  {/if}
                 </div>
               {/if}
               {#if log.llmCalls || log.promptChars || log.finishReason}

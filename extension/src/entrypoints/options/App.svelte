@@ -75,12 +75,9 @@
     <SiteRulesSettings bind:customRules />
 
     <section class="panel-card !p-2.5 flex flex-col gap-1.5">
-      <span class="kicker">关于与许可</span>
+      <span class="kicker">关于</span>
       <p class="text-[11px] text-[var(--text-muted)] leading-snug">
-        {identity.productName} 插件 v{version}。用 RawReader 时，文字识别和翻译都在你电脑上完成，插件只和 127.0.0.1 通信。用直连 API 时，图片会发给你选的服务商，API Key 只保存在本机浏览器。插件没有遥测。
-      </p>
-      <p class="text-[11px] text-[var(--text-muted)] leading-snug">
-        许可证：AGPL-3.0。部分代码移植自 libre-manga-translator（AGPL-3.0-or-later），详见仓库中的 extension/THIRD_PARTY_NOTICES.md。
+        {identity.productName} 插件 v{version}（AGPL-3.0）。无遥测；部分界面代码移植自 libre-manga-translator。
       </p>
     </section>
   {/if}

@@ -41,7 +41,7 @@ export default defineConfig({
     key: extensionKey.key,
     name: identity.productName,
     version_name: pkg.version,
-    description: `${identity.productName} browser extension: sends comic images to the ${identity.productName} app on this computer (or to a vision API you configure) and draws the translation.`,
+    description: `${identity.productName} 漫画翻译插件：配合本机 ${identity.productName} 或直连视觉 API，自动识别并翻译网页漫画。`,
     permissions: ["activeTab", "offscreen", "storage", "unlimitedStorage", "declarativeNetRequest", "contextMenus"],
     // `<all_urls>` covers the image hosts, http://127.0.0.1/* (the app bridge) and the direct API hosts.
     // The preset API hosts are also listed on their own so they stay granted if `<all_urls>` is ever narrowed.
