@@ -5,12 +5,13 @@
   import AdvancedSection from './AdvancedSection.svelte'
   import BridgeTab from './BridgeTab.svelte'
   import EngineSection from './EngineSection.svelte'
+  import HistoryTab from './HistoryTab.svelte'
   import ModelsSection from './ModelsSection.svelte'
   import ServersSection from './ServersSection.svelte'
 
   // The licence view is hidden: the notices ship in the installer (resources/licenses) and in the repository.
   // LicensesSection.svelte is kept so it can come back by adding 'licenses' here.
-  const tabs: SettingsTab[] = ['engine', 'models', 'advanced', 'servers', 'bridge']
+  const tabs: SettingsTab[] = ['engine', 'models', 'advanced', 'servers', 'bridge', 'history']
 
   /** 16px line icons, one per page. */
   const icons: Record<string, string> = {
@@ -19,6 +20,7 @@
     advanced: 'M2 4h7M12 4h2M2 8h2M7 8h7M2 12h9M14 12h0M10.5 2.5v3M5.5 6.5v3M12.5 10.5v3',
     servers: 'M2.5 3h11v4h-11zM2.5 9h11v4h-11zM5 5h.01M5 11h.01',
     bridge: 'M6 2.5v3M10 2.5v3M4 5.5h8v3a4 4 0 0 1-8 0v-3ZM8 12.5v1',
+    history: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM8 5v3.2l2.2 1.3',
   }
 </script>
 
@@ -51,6 +53,8 @@
         <AdvancedSection />
       {:else if store.tab === 'bridge'}
         <BridgeTab />
+      {:else if store.tab === 'history'}
+        <HistoryTab />
       {/if}
     </div>
   </div>

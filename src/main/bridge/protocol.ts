@@ -82,6 +82,39 @@ export const PingResponseSchema = z.strictObject({
 })
 export type PingResponse = z.infer<typeof PingResponseSchema>
 
+/** Most visits one `POST /history` may carry, and the biggest body it may have. */
+export const MAX_HISTORY_ITEMS = 200
+export const HISTORY_BODY_LIMIT_BYTES = 256 * 1024
+
+/** One page the extension saw the user read. Only these fields cross; the app cleans them again. */
+export const HistoryItemSchema = z.strictObject({
+  url: z.string().min(1).max(4096),
+  title: z.string().max(1000).optional(),
+  series: z.string().max(1000).optional(),
+  chapter: z.string().max(1000).optional(),
+  /** Time of the visit, ms since the epoch. */
+  visitedAt: finite.optional(),
+})
+export type HistoryItem = z.infer<typeof HistoryItemSchema>
+
+export const HistoryRequestSchema = z.strictObject({
+  v: z.literal(BRIDGE_PROTOCOL_VERSION),
+  items: z.array(HistoryItemSchema).min(1).max(MAX_HISTORY_ITEMS),
+})
+
+/** `POST /history/open`: show the reading history in the app window. */
+export const HistoryOpenRequestSchema = z.strictObject({ v: z.literal(BRIDGE_PROTOCOL_VERSION) })
+
+export interface HistoryResponse {
+  v: 1
+  /** Visits the app stored or updated. Items it cannot store (not http or https) are not counted. */
+  accepted: number
+}
+export interface HistoryOpenResponse {
+  v: 1
+  ok: true
+}
+
 const box = (b: { x1: number; y1: number; x2: number; y2: number; confidence: number }) => ({
   x1: b.x1,
   y1: b.y1,

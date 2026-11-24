@@ -19,7 +19,7 @@ import type {
 import { label, zhCN } from './i18n/zh-CN'
 import { resolveTheme } from '../../shared/theme'
 
-export type SettingsTab = 'engine' | 'models' | 'servers' | 'advanced' | 'licenses' | 'bridge'
+export type SettingsTab = 'engine' | 'models' | 'servers' | 'advanced' | 'licenses' | 'bridge' | 'history'
 
 export interface ShellStore {
   browse: BrowseState
@@ -105,6 +105,7 @@ export function initStore(onFocusAddress: () => void = () => {}): () => void {
       store.tabs = state
     }),
     api.on('shell:focus-address', () => onFocusAddress()),
+    api.on('history:show', () => openSettings('history')),
     api.on('webtext:bar', (bar) => {
       store.webBar = bar
     }),

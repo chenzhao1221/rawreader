@@ -12,7 +12,7 @@ export interface GuardState {
   port: number
 }
 
-export type GuardRoute = 'ping' | 'translate'
+export type GuardRoute = 'ping' | 'translate' | 'history' | 'history-open'
 
 export type GuardResult =
   | { ok: true; route: GuardRoute; preflight: boolean; origin: string }
@@ -21,6 +21,8 @@ export type GuardResult =
 const ROUTES: Record<string, { method: string; route: GuardRoute }> = {
   '/ping': { method: 'GET', route: 'ping' },
   '/translate': { method: 'POST', route: 'translate' },
+  '/history': { method: 'POST', route: 'history' },
+  '/history/open': { method: 'POST', route: 'history-open' },
 }
 
 const fail = (status: 403 | 404, code: string, message: string, origin?: string): GuardResult => ({

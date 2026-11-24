@@ -47,7 +47,7 @@ interface UnitView {
 }
 
 interface Entry {
-  el: HTMLImageElement
+  el: Element
   host: HTMLDivElement
   payload: OverlayResult
   units: UnitView[]
@@ -195,9 +195,9 @@ export class OverlayManager {
 
   // -------------------------------------------------------------------------
 
-  private findElement(elId: string): HTMLImageElement | null {
-    const selector = `img[${ELEMENT_ID_ATTR}="${this.options.win.CSS.escape(elId)}"]`
-    return this.options.doc.querySelector<HTMLImageElement>(selector)
+  private findElement(elId: string): Element | null {
+    const selector = `[${ELEMENT_ID_ATTR}="${this.options.win.CSS.escape(elId)}"]`
+    return this.options.doc.querySelector(selector)
   }
 
   private getSheet(): CSSStyleSheet {
@@ -263,7 +263,7 @@ export class OverlayManager {
   // -------------------------------------------------------------------------
   // Geometry sync (LMT syncWrapperGeometry + createImageObservers, see overlay-geometry.ts)
 
-  private startObserving(el: HTMLImageElement): void {
+  private startObserving(el: Element): void {
     const { win } = this.options
     if (!this.resizeObserver) {
       this.resizeObserver = new win.ResizeObserver(() => this.scheduleSync())

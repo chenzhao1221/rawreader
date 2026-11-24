@@ -3,6 +3,7 @@ import type {
   CacheStats,
   CudaStatus,
   HardwareInfo,
+  HistoryList,
   BridgeStatus,
   Licenses,
   ModelRoleName,
@@ -42,6 +43,13 @@ export interface HandlerDeps {
   pageImages(batch: PageImagesBatch, senderId: number): void
   /** Browse preload found the image the user right-clicked and wants it translated now. */
   pageTranslateImage(request: PageTranslateImage, senderId: number): void
+  /** Browse preload found no picture at the click of `translate this image`. */
+  pageTranslateNone(senderId: number): void
+  /** Reading history (shell only). */
+  historyList(query: string, limit: number, offset: number): HistoryList
+  /** Deletes one entry; returns how many are left. */
+  historyRemove(id: number): number
+  historyClear(): void
   getTabs(): TabsState
   /** Opens a new tab with the given URL, or an empty one. */
   newTab(url: string | null): void
@@ -143,6 +151,14 @@ export function registerSkeletonHandlers(registrar: IpcRegistrar, deps: HandlerD
   })
   registrar.handle('page:translate-image', (request, event) => {
     deps.pageTranslateImage(request, event.sender.id)
+  })
+  registrar.handle('page:translate-none', (_none, event) => {
+    deps.pageTranslateNone(event.sender.id)
+  })
+  registrar.handle('history:list', ({ query, limit, offset }) => deps.historyList(query, limit, offset))
+  registrar.handle('history:remove', ({ id }) => deps.historyRemove(id))
+  registrar.handle('history:clear', () => {
+    deps.historyClear()
   })
   registrar.handle('overlay:font', () => deps.getOverlayFont())
   registrar.handle('cache:stats', () => deps.getCacheStats())

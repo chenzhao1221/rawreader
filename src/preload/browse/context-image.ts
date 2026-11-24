@@ -65,3 +65,27 @@ export function pickContextImage<T extends ImageLike>(atPoint: readonly T[], all
   for (const img of all) if (imageMatchesUrl(img, srcUrl, baseUrl)) return img
   return atPoint[0] ?? null
 }
+
+/**
+ * The picture a CSS `background-image` value shows: the first `url(...)` layer (gradients are skipped), normalised.
+ * Null for `none`, gradients only, or an unusable value. Computed styles quote the URL; unquoted ones are accepted too.
+ */
+export function backgroundImageUrl(cssValue: string | null | undefined, baseUrl: string): string | null {
+  const value = cssValue?.trim()
+  if (!value || value === 'none') return null
+  const match = /url\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^)\s]*))\s*\)/i.exec(value)
+  const raw = match?.[1] ?? match?.[2] ?? match?.[3]
+  return normalizeUrl(raw?.replace(/\\(.)/g, '$1'), baseUrl)
+}
+
+/**
+ * The first element at the click point (topmost first) that paints a picture as its CSS background, with that
+ * picture's URL. `backgroundOf(el)` returns the computed `background-image` of an element.
+ */
+export function pickBackgroundTarget<T>(atPoint: readonly T[], backgroundOf: (el: T) => string | null, baseUrl: string): { el: T; url: string } | null {
+  for (const el of atPoint) {
+    const url = backgroundImageUrl(backgroundOf(el), baseUrl)
+    if (url) return { el, url }
+  }
+  return null
+}

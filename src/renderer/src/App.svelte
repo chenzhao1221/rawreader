@@ -171,6 +171,16 @@
     <button
       type="button"
       class="icon-btn"
+      class:active={store.panelOpen && store.tab === 'history'}
+      title={t.toolbar.history}
+      aria-label={t.toolbar.history}
+      onclick={() => openSettings('history')}
+    >
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 5v3.2l2.2 1.3" /></svg>
+    </button>
+    <button
+      type="button"
+      class="icon-btn"
       class:active={store.panelOpen}
       aria-pressed={store.panelOpen}
       title={t.toolbar.settings}

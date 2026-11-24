@@ -111,7 +111,7 @@ export const SecretsStatusSchema = z.object({ openai: z.boolean(), gemini: z.boo
 export type SecretsStatus = z.infer<typeof SecretsStatusSchema>
 
 export const ShellNoticeSchema = z.object({
-  code: z.enum(['DOWNLOAD_CANCELLED', 'NAVIGATION_BLOCKED', 'LOAD_FAILED', 'TRANSLATE_IMAGE_FAILED']),
+  code: z.enum(['DOWNLOAD_CANCELLED', 'NAVIGATION_BLOCKED', 'LOAD_FAILED', 'TRANSLATE_IMAGE_FAILED', 'TRANSLATE_IMAGE_NOT_FOUND']),
 })
 export type ShellNotice = z.infer<typeof ShellNoticeSchema>
 
@@ -202,6 +202,31 @@ export const OverlayResultSchema = z.object({
 export type OverlayResult = z.infer<typeof OverlayResultSchema>
 export const CacheStatsSchema = z.object({ entries: z.number().int().min(0), bytes: z.number().min(0) })
 export type CacheStats = z.infer<typeof CacheStatsSchema>
+
+// ---------------------------------------------------------------------------
+// Reading history (shell only). Stored in the app's own database; see src/main/history.
+// ---------------------------------------------------------------------------
+
+export const HistoryEntrySchema = z.object({
+  id: z.number().int(),
+  url: z.string(),
+  title: z.string(),
+  site: z.string(),
+  series: z.string(),
+  chapter: z.string(),
+  firstVisitedAt: z.number(),
+  lastVisitedAt: z.number(),
+  visits: z.number().int().min(1),
+})
+export type HistoryEntry = z.infer<typeof HistoryEntrySchema>
+
+export const HistoryListRequestSchema = z.object({
+  query: z.string().max(200),
+  limit: z.number().int().min(1).max(500),
+  offset: z.number().int().min(0).max(1_000_000),
+})
+export const HistoryListSchema = z.object({ entries: z.array(HistoryEntrySchema), total: z.number().int().min(0) })
+export type HistoryList = z.infer<typeof HistoryListSchema>
 
 // ---------------------------------------------------------------------------
 // Models, CUDA backend, licences (shell only)
@@ -369,6 +394,11 @@ export const ipc = {
   'page:hello': def(PageHelloSchema, PageConfigSchema, ['browse']),
   'page:images': def(PageImagesBatchSchema, z.void(), ['browse']),
   'page:translate-image': def(PageTranslateImageSchema, z.void(), ['browse']),
+  /** The page found no picture at the click of "translate this image". */
+  'page:translate-none': def(z.object({ docId: z.string().min(8).max(64) }), z.void(), ['browse']),
+  'history:list': def(HistoryListRequestSchema, HistoryListSchema),
+  'history:remove': def(z.object({ id: z.number().int() }), HistoryListSchema.shape.total),
+  'history:clear': def(z.void(), z.void()),
   'models:overview': def(z.void(), ModelsOverviewSchema),
   'models:download': def(
     z.object({ action: z.enum(['start', 'pause', 'resume', 'cancel']), role: ModelRoleSchema.optional() }),
@@ -393,6 +423,8 @@ export const events = {
   'browse:state': BrowseStateSchema,
   'tabs:state': TabsStateSchema,
   'shell:focus-address': z.object({}),
+  /** Open the reading-history page (asked for by the extension through the bridge). */
+  'history:show': z.object({}),
   'webtext:command': WebTextCommandSchema,
   'webtext:bar': WebTextBarSchema,
   'config:changed': ConfigSchema,

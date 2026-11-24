@@ -18,18 +18,18 @@ const find = (entries: MenuEntry[], action: string) => entries.find((e) => e.typ
 describe('buildMenuEntries', () => {
   it('offers back, forward and reload on a plain page, with forward disabled when there is no forward history', () => {
     const entries = buildMenuEntries(plain, state)
-    expect(actions(entries)).toEqual(['back', 'forward', 'reload'])
+    expect(actions(entries)).toEqual(['translate-image', '|', 'back', 'forward', 'reload'])
     expect(find(entries, 'back')).toMatchObject({ enabled: true, label: MENU_LABELS.back })
     expect(find(entries, 'forward')).toMatchObject({ enabled: false })
   })
 
   it('adds Copy for a text selection', () => {
     const entries = buildMenuEntries({ ...plain, selectionText: 'abc', editFlags: { ...plain.editFlags, canCopy: true } }, state)
-    expect(actions(entries)).toEqual(['copy', '|', 'back', 'forward', 'reload'])
+    expect(actions(entries)).toEqual(['translate-image', '|', 'copy', '|', 'back', 'forward', 'reload'])
   })
 
   it('ignores a whitespace-only selection', () => {
-    expect(actions(buildMenuEntries({ ...plain, selectionText: '  ' }, state))).toEqual(['back', 'forward', 'reload'])
+    expect(actions(buildMenuEntries({ ...plain, selectionText: '  ' }, state))).toEqual(['translate-image', '|', 'back', 'forward', 'reload'])
   })
 
   it('offers cut, copy, paste and select all in editable fields, honouring the edit flags', () => {
@@ -56,6 +56,23 @@ describe('buildMenuEntries', () => {
     expect(find(entries, 'translate-image')).toBeUndefined()
     expect(find(entries, 'open-image')).toBeUndefined()
     expect(find(entries, 'copy-image')).toBeDefined()
+  })
+
+  it('offers translation where the browser reports no image (transparent layer, CSS background, canvas)', () => {
+    for (const mediaType of ['none', 'canvas']) {
+      const entries = buildMenuEntries({ ...plain, mediaType }, state)
+      expect(find(entries, 'translate-image')).toMatchObject({ enabled: true, label: '翻译这张图片' })
+      expect(find(entries, 'copy-image')).toBeUndefined()
+    }
+    expect(find(buildMenuEntries({ ...plain, mediaType: 'image', srcURL: '' }, state), 'translate-image')).toBeDefined()
+    expect(find(buildMenuEntries({ ...plain, linkURL: 'https://reader.example.test/n' }, state), 'translate-image')).toBeDefined()
+  })
+
+  it('does not offer translation in editable fields or on audio, video and plugins', () => {
+    expect(find(buildMenuEntries({ ...plain, isEditable: true }, state), 'translate-image')).toBeUndefined()
+    for (const mediaType of ['video', 'audio', 'plugin', 'file']) {
+      expect(find(buildMenuEntries({ ...plain, mediaType }, state), 'translate-image')).toBeUndefined()
+    }
   })
 
   it('shows no image entries for other media or an image without a URL', () => {

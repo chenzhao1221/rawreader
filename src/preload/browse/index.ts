@@ -6,7 +6,7 @@ import { ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { IpcResult, PageConfig, PageImage } from '../../shared/ipc/contract'
 import { OverlayManager, isOverlayResult } from './overlay'
-import { imageMatchesUrl, normalizeUrl, pickContextImage } from './context-image'
+import { imageMatchesUrl, normalizeUrl, pickBackgroundTarget, pickContextImage } from './context-image'
 import { ScrollQueue } from './scroll-queue'
 import { WebTextTranslator, sampleText } from './webtext'
 
@@ -67,11 +67,22 @@ ipcRenderer.on('page:translate-request', (_event: IpcRendererEvent, request: unk
   const { x, y, srcUrl } = (request ?? {}) as { x?: unknown; y?: unknown; srcUrl?: unknown }
   if (typeof x !== 'number' || typeof y !== 'number' || typeof srcUrl !== 'string') return
   const atPoint = document.elementsFromPoint(x, y).filter((el): el is HTMLImageElement => el instanceof HTMLImageElement)
+  const reportNone = (): void => void ipcRenderer.invoke('page:translate-none', { docId }).catch(() => {})
+  let image = null as ReturnType<typeof queue.describeImage>
   const img = pickContextImage(atPoint, document.images, srcUrl, document.baseURI)
-  if (!img) return
-  const matched = imageMatchesUrl(img, srcUrl, document.baseURI) ? normalizeUrl(srcUrl, document.baseURI) : null
-  const image = queue.describeImage(img, matched ?? undefined)
-  if (!image) return
+  if (img) {
+    const matched = imageMatchesUrl(img, srcUrl, document.baseURI) ? normalizeUrl(srcUrl, document.baseURI) : null
+    image = queue.describeImage(img, matched ?? undefined)
+  } else {
+    // No <img> there: a reader that paints the page as a CSS background (or under a transparent layer) has the URL
+    // in the computed style of an element stacked at the click.
+    const bg = pickBackgroundTarget(document.elementsFromPoint(x, y), (el) => getComputedStyle(el).backgroundImage, document.baseURI)
+    if (bg) image = queue.describeElement(bg.el, bg.url)
+  }
+  if (!image) {
+    reportNone()
+    return
+  }
   void ipcRenderer.invoke('page:translate-image', { docId, pageUrl: location.href, image }).catch(() => {})
 })
 

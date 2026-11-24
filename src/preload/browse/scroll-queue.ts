@@ -304,7 +304,7 @@ export class ScrollQueue {
     return distance > config.rootMarginPx ? null : { img, distance }
   }
 
-  private elementId(img: HTMLImageElement): string {
+  private elementId(img: Element): string {
     let id = img.getAttribute(ELEMENT_ID_ATTR)
     if (!id) {
       id = `rr${this.nextId++}`
@@ -330,6 +330,23 @@ export class ScrollQueue {
       naturalH: img.naturalHeight,
       distance: 0,
       ...(order >= 0 ? { order } : {}),
+    }
+  }
+
+  /**
+   * Describes a non-<img> element that paints the picture as a CSS background (right-click on such a page). The
+   * element is tagged like an image so the overlay can find it; sizes are the shown size, the real size is
+   * read from the captured bytes later.
+   */
+  describeElement(el: Element, url: string): PageImage | null {
+    if (!url || !isReportableUrl(url)) return null
+    const box = el.getBoundingClientRect()
+    return {
+      elId: this.elementId(el),
+      url,
+      naturalW: Math.min(100_000, Math.max(0, Math.round(box.width))),
+      naturalH: Math.min(1_000_000, Math.max(0, Math.round(box.height))),
+      distance: 0,
     }
   }
 

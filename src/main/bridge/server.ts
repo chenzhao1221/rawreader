@@ -3,8 +3,8 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { sniffMime } from '../capture/sniff'
 import type { Logger } from '../log/log'
 import { checkRequest } from './guards'
-import { TranslateRequestSchema } from './protocol'
-import type { BridgeError, PingResponse, TranslateRequest, TranslateResponse } from './protocol'
+import { HISTORY_BODY_LIMIT_BYTES, HistoryOpenRequestSchema, HistoryRequestSchema, TranslateRequestSchema } from './protocol'
+import type { BridgeError, HistoryItem, PingResponse, TranslateRequest, TranslateResponse } from './protocol'
 
 /** The only address the bridge ever binds. Not configurable on purpose. */
 export const BRIDGE_HOST = '127.0.0.1'
@@ -31,7 +31,17 @@ export interface BridgeFailure {
 /** Codes that mean "the engine cannot take work now" (answered 503 instead of 502). */
 const UNAVAILABLE_CODES = new Set(['SERVER_NOT_READY', 'API_KEY_MISSING', 'MODEL_MISSING'])
 
+/** What the history routes need from the app. */
+export interface BridgeHistoryPort {
+  /** Stores the visits; returns how many were stored or updated. */
+  record(items: readonly HistoryItem[]): number
+  /** Shows the history page in the app window. */
+  open(): void
+}
+
 export interface BridgeServerDeps {
+  /** Reading history of the app. Without it the history routes answer 404. */
+  history?: BridgeHistoryPort
   /** Status for `GET /ping`. */
   ping(): PingResponse
   translate(job: BridgeTranslateJob): Promise<TranslateResponse>
@@ -119,6 +129,40 @@ export function createBridgeServer(deps: BridgeServerDeps): BridgeServer {
     })
   }
 
+  /** `POST /history` (visits from the extension) and `POST /history/open` (show the history page). */
+  async function handleHistory(req: IncomingMessage, res: ServerResponse, origin: string, route: 'history' | 'history-open'): Promise<void> {
+    const history = deps.history
+    if (!history) {
+      send(res, 404, errorBody('not-found', 'Not found'), origin)
+      return
+    }
+    const body = await readBody(req, res, route === 'history' ? HISTORY_BODY_LIMIT_BYTES : 1024, origin)
+    if (body === null) return
+    let json: unknown
+    try {
+      json = JSON.parse(body.toString('utf8'))
+    } catch {
+      send(res, 400, errorBody('bad-request', 'Body is not valid JSON'), origin)
+      return
+    }
+    if (route === 'history-open') {
+      if (!HistoryOpenRequestSchema.safeParse(json).success) {
+        send(res, 400, errorBody('bad-request', 'Invalid request: body'), origin)
+        return
+      }
+      history.open()
+      send(res, 200, { v: 1, ok: true }, origin)
+      return
+    }
+    const parsed = HistoryRequestSchema.safeParse(json)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      send(res, 400, errorBody('bad-request', `Invalid request: ${issue?.path.join('.') || 'body'}`), origin)
+      return
+    }
+    send(res, 200, { v: 1, accepted: history.record(parsed.data.items) }, origin)
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const started = now()
     const method = req.method ?? ''
@@ -155,6 +199,11 @@ export function createBridgeServer(deps: BridgeServerDeps): BridgeServer {
 
     if (verdict.route === 'ping') {
       send(res, 200, deps.ping(), origin)
+      return
+    }
+
+    if (verdict.route === 'history' || verdict.route === 'history-open') {
+      await handleHistory(req, res, origin, verdict.route)
       return
     }
 

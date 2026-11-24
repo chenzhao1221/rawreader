@@ -15,6 +15,9 @@ import { createPipelineCache } from './cache/pipeline-cache'
 import { openResultCache } from './cache/store'
 import type { ResultCache } from './cache/store'
 import { getConfig, initConfig, onConfigChanged, updateConfig } from './config/store'
+import { openHistoryStore } from './history/store'
+import type { HistoryStore } from './history/store'
+import { attachHistoryRecorder } from './history/tab-recorder'
 import { registerSkeletonHandlers } from './ipc/handlers'
 import { createIpcRegistrar } from './ipc/register'
 import { resolveBinDir } from './llama/backend'
@@ -78,6 +81,7 @@ let manager: LlamaManager | null = null
 let wiring: PipelineWiring | null = null
 let bridge: Bridge | null = null
 let openCache: ResultCache | null = null
+let openHistory: HistoryStore | null = null
 let models: ModelService | null = null
 let cuda: CudaInstaller | null = null
 let disposeIpc: (() => void) | null = null
@@ -165,6 +169,9 @@ async function bootstrap(): Promise<void> {
     logger: cacheLogger,
   })
   openCache = resultCache
+  // Reading history: its own small database in the app's data folder. Without it the app still runs.
+  const historyStore = openHistoryStore(join(userDataDir, 'history', 'history.db'), { logger: createLogger('history') })
+  openHistory = historyStore
   const pipelineWiring = createPipelineWiring({
     getConfig,
     getServerStatus: (role) => llama.getStatus(role),
@@ -193,6 +200,14 @@ async function bootstrap(): Promise<void> {
         (name) => secrets.has(name),
       ),
     appInfo: { productName: appIdentity.productName, version: app.getVersion() },
+    history: {
+      record: (items) =>
+        historyStore?.touchMany(items.map((item) => ({ url: item.url, title: item.title, series: item.series, chapter: item.chapter, at: item.visitedAt }))) ?? 0,
+      open: () => {
+        showWindow(win)
+        sendToShell('history:show', {})
+      },
+    },
     logger: createLogger('bridge'),
   })
   bridge = bridgeService
@@ -247,6 +262,7 @@ async function bootstrap(): Promise<void> {
     },
     onTabCreated: (view) => {
       pipelineWiring.attachTab(view.webContents)
+      if (historyStore) attachHistoryRecorder(view.webContents, (touch) => void historyStore.touchMany([touch]))
       const id = view.webContentsId
       view.webContents.on('did-start-navigation', (details) => {
         if (details.isMainFrame && !details.isSameDocument) webText.forget(id)
@@ -356,6 +372,12 @@ async function bootstrap(): Promise<void> {
         if (!ok) sendToShell('shell:notice', { code: 'TRANSLATE_IMAGE_FAILED' })
       })
     },
+    pageTranslateNone: (senderId) => {
+      if (tabManager.isTab(senderId)) sendToShell('shell:notice', { code: 'TRANSLATE_IMAGE_NOT_FOUND' })
+    },
+    historyList: (query, limit, offset) => historyStore?.list(query, limit, offset) ?? { entries: [], total: 0 },
+    historyRemove: (id) => historyStore?.remove(id) ?? 0,
+    historyClear: () => historyStore?.clear(),
     webTextPage: (page, senderId) => {
       void webText.pageReady(senderId, page)
     },
@@ -491,6 +513,8 @@ if (headlessFlag) {
       await wiring?.dispose()
       openCache?.close()
       openCache = null
+      openHistory?.close()
+      openHistory = null
       await manager?.stopAll()
       tabs?.destroyAll()
       tray?.destroy()

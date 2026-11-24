@@ -23,6 +23,7 @@ export const zhCN = {
     autoTranslate: '自动翻译',
     overlayVisible: '显示译文',
     settings: '设置',
+    history: '阅读历史',
   },
   browse: {
     emptyHint: '在上方地址栏输入网址，开始阅读。',
@@ -137,7 +138,7 @@ export const zhCN = {
     title: '设置',
     close: '关闭',
     back: '返回阅读',
-    tabs: { engine: '翻译方式', models: '模型', servers: '服务', advanced: '阅读与网页', licenses: '开源许可', bridge: '浏览器插件' },
+    tabs: { engine: '翻译方式', models: '模型', servers: '服务', advanced: '阅读与网页', licenses: '开源许可', bridge: '浏览器插件', history: '阅读历史' },
     apply: '应用',
     saved: '已保存。',
     invalid: '参数无效，未保存。',
@@ -206,6 +207,25 @@ export const zhCN = {
       fallbackOffer: 'CUDA 或自定义后端未能正常启动。',
       switchToVulkan: '切换回 Vulkan',
     },
+  },
+  history: {
+    intro: '你在内置浏览器里看过的页面，和浏览器插件报告的翻译页面，只记在这台电脑上，不上传、不同步。',
+    searchPlaceholder: '搜索标题、网址或站点',
+    total: (n: number): string => `共 ${n} 条`,
+    matched: (n: number): string => `找到 ${n} 条`,
+    empty: '还没有记录。在内置浏览器里打开漫画页面，或让插件翻译一页，就会出现在这里。',
+    noMatch: '没有找到匹配的记录。',
+    untitled: '（无标题）',
+    groups: { today: '今天', yesterday: '昨天', earlier: '更早' },
+    visits: (n: number): string => `看过 ${n} 次`,
+    open: '打开',
+    remove: '删除',
+    removeTitle: '删除这条记录',
+    clear: '清空全部',
+    clearConfirm: '确定清空全部',
+    clearCancel: '取消',
+    loadMore: '显示更多',
+    note: '清空后无法恢复。记录不包含图片、原文或译文。',
   },
   bridge: {
     intro: '安装 Chrome 里的 RawReader 插件后，打开本程序就能直接使用，不需要配对码。插件会把页面图片发给本机翻译，使用这里的模型、设置和缓存。只监听本机 127.0.0.1，并且只接受本插件的请求。',
@@ -302,6 +322,7 @@ const noticeLabels: Record<ShellNotice['code'], string> = {
   NAVIGATION_BLOCKED: '已阻止打开非 http(s) 链接。',
   LOAD_FAILED: '页面加载失败。',
   TRANSLATE_IMAGE_FAILED: '这张图片翻译失败，详情见日志。',
+  TRANSLATE_IMAGE_NOT_FOUND: '这里没找到漫画图片。',
 }
 
 /** Names of the languages most pages use. Others show as "外语". */

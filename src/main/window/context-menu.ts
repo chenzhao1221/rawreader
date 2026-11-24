@@ -54,6 +54,18 @@ export function isTranslatableImageUrl(url: string): boolean {
   return isHttpUrl(url) || /^data:image\//i.test(url)
 }
 
+/**
+ * "Translate this image" is decided by where the click landed, which only the page can tell: a transparent
+ * flip layer, a CSS background or a canvas report no image URL to the menu. So the entry is offered everywhere
+ * except in editable fields, on audio, video and plugins, and on an image the app cannot capture (blob URL).
+ * The page looks at the click position and answers with a short notice when it finds no picture there.
+ */
+function offersTranslation(params: MenuParams): boolean {
+  if (params.isEditable) return false
+  if (params.mediaType === 'image' && params.srcURL !== '') return isTranslatableImageUrl(params.srcURL)
+  return params.mediaType === 'none' || params.mediaType === 'canvas' || params.mediaType === 'image'
+}
+
 const item = (action: MenuAction, label: string, enabled = true): MenuEntry => ({ type: 'item', action, label, enabled })
 
 /**
@@ -63,13 +75,14 @@ const item = (action: MenuAction, label: string, enabled = true): MenuEntry => (
 export function buildMenuEntries(params: MenuParams, state: MenuState): MenuEntry[] {
   const groups: MenuEntry[][] = []
 
-  if (params.mediaType === 'image' && params.srcURL) {
-    const group: MenuEntry[] = []
-    if (isTranslatableImageUrl(params.srcURL)) group.push(item('translate-image', MENU_LABELS.translateImage))
+  const isImage = params.mediaType === 'image' && params.srcURL !== ''
+  const group: MenuEntry[] = []
+  if (offersTranslation(params)) group.push(item('translate-image', MENU_LABELS.translateImage))
+  if (isImage) {
     group.push(item('copy-image', MENU_LABELS.copyImage))
     if (isHttpUrl(params.srcURL)) group.push(item('open-image', MENU_LABELS.openImage))
-    groups.push(group)
   }
+  groups.push(group)
 
   if (isHttpUrl(params.linkURL)) groups.push([item('copy-link', MENU_LABELS.copyLink)])
 

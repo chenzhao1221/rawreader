@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { imageMatchesUrl, imageUrls, normalizeUrl, pickContextImage } from './context-image'
+import { backgroundImageUrl, imageMatchesUrl, imageUrls, normalizeUrl, pickBackgroundTarget, pickContextImage } from './context-image'
 import type { ImageLike } from './context-image'
 
 const PAGE = 'https://reader.example.test/series/1/chapter/2'
@@ -63,5 +63,35 @@ describe('pickContextImage', () => {
   it('returns null when there is nothing', () => {
     expect(pickContextImage([], [], URL_A, PAGE)).toBeNull()
     expect(pickContextImage([], [img({ src: URL_B })], URL_A, PAGE)).toBeNull()
+  })
+})
+
+describe('backgroundImageUrl', () => {
+  it('reads quoted, single-quoted and unquoted url() values and resolves relative ones', () => {
+    expect(backgroundImageUrl(`url("${URL_A}")`, PAGE)).toBe(URL_A)
+    expect(backgroundImageUrl(`url('${URL_A}')`, PAGE)).toBe(URL_A)
+    expect(backgroundImageUrl(`url(${URL_A})`, PAGE)).toBe(URL_A)
+    expect(backgroundImageUrl('url("/p/3.jpg#x")', PAGE)).toBe('https://reader.example.test/p/3.jpg')
+  })
+  it('takes the first url() layer and skips gradients', () => {
+    expect(backgroundImageUrl(`linear-gradient(red, blue), url("${URL_B}"), url("${URL_A}")`, PAGE)).toBe(URL_B)
+    expect(backgroundImageUrl('linear-gradient(red, blue)', PAGE)).toBeNull()
+  })
+  it('keeps data URLs and returns null for none or empty values', () => {
+    expect(backgroundImageUrl('url("data:image/png;base64,AAAA")', PAGE)).toBe('data:image/png;base64,AAAA')
+    expect(backgroundImageUrl('none', PAGE)).toBeNull()
+    expect(backgroundImageUrl('', PAGE)).toBeNull()
+    expect(backgroundImageUrl(undefined, PAGE)).toBeNull()
+  })
+})
+
+describe('pickBackgroundTarget', () => {
+  it('returns the topmost element that paints a background picture', () => {
+    const layers = [{ id: 'layer', css: 'none' }, { id: 'frame', css: `url("${URL_A}")` }, { id: 'page', css: `url("${URL_B}")` }]
+    expect(pickBackgroundTarget(layers, (el) => el.css, PAGE)).toEqual({ el: layers[1], url: URL_A })
+  })
+  it('returns null when nothing at the point has a background picture', () => {
+    expect(pickBackgroundTarget([{ css: 'none' }], (el) => el.css, PAGE)).toBeNull()
+    expect(pickBackgroundTarget([], () => null, PAGE)).toBeNull()
   })
 })

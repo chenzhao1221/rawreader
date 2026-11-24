@@ -7,7 +7,7 @@ import { normalizeContext } from './context'
 import { toBridgeResult } from './protocol'
 import type { PingResponse } from './protocol'
 import { createBridgeServer } from './server'
-import type { BridgeFailure, BridgeServer, BridgeServerDeps } from './server'
+import type { BridgeFailure, BridgeHistoryPort, BridgeServer, BridgeServerDeps } from './server'
 
 export type BridgeState = 'off' | 'starting' | 'listening' | 'error'
 
@@ -26,6 +26,8 @@ export interface BridgeDeps {
   /** `null` when the configured engine can take work, otherwise why not (as for the desktop pipeline). */
   serversUnavailable(): { code: string; message: string } | null
   appInfo: { productName: string; version: string }
+  /** Reading history behind `POST /history` and `POST /history/open`. */
+  history?: BridgeHistoryPort
   logger: Logger
   /** Test seam: replaces the HTTP server. */
   createServer?: (deps: BridgeServerDeps) => BridgeServer
@@ -68,6 +70,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
 
   function serverDeps(): BridgeServerDeps {
     return {
+      ...(deps.history ? { history: deps.history } : {}),
       ping(): PingResponse {
         const reason = deps.serversUnavailable()
         return {
