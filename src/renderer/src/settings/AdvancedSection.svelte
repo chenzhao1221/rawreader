@@ -95,9 +95,9 @@
   </Group>
 
   <Group title={t.advanced.cache}>
-    <Row label={t.advanced.cacheUsed} detail={store.cache ? `${store.cache.entries} · ${formatBytes(store.cache.bytes)}` : undefined}>
+    <Row label={t.advanced.cacheUsed} detail={store.cache ? `${store.cache.entries} 张 · ${formatBytes(store.cache.bytes)}` : undefined}>
       {#if confirmClear}
-        <button type="button" class="ui-btn ghost" onclick={() => (confirmClear = false)}>{t.settings.no}</button>
+        <button type="button" class="ui-btn ghost" onclick={() => (confirmClear = false)}>{t.settings.cancel}</button>
         <button
           type="button"
           class="ui-btn danger"

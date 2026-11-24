@@ -71,7 +71,7 @@
     const name = label.serverRole(role)
     if (!status) return `${name}：…`
     const text = status.errorCode ? label.llamaError(status.errorCode) : label.serverState(status.state)
-    return status.message ? `${name}：${text} · ${status.message}` : `${name}：${text}`
+    return `${name}：${text}`
   }
 
   const autoTranslate = $derived(store.config?.ui.autoTranslate ?? false)

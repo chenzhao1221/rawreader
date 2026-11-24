@@ -124,7 +124,7 @@
   </div>
 {/if}
 
-<Group title={t.servers.backend.heading}>
+<Group>
   <Row label={t.servers.backend.heading}>
     <Segmented
       label={t.servers.backend.heading}

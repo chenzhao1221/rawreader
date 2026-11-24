@@ -100,8 +100,6 @@
   const searching = $derived(query.trim() !== '')
 </script>
 
-<p class="intro">{t.history.intro}</p>
-
 <div class="bar">
   <input
     class="ui-input search"
@@ -151,16 +149,11 @@
 <p class="note">{t.history.note}</p>
 
 <style>
-  .intro,
-  .note {
-    margin: 0 0 var(--gap-l);
-    color: var(--text-dim);
-    font-size: var(--text-s);
-    line-height: 1.6;
-  }
   .note {
     margin: var(--gap-l) 0 0;
     color: var(--text-faint);
+    font-size: var(--text-s);
+    line-height: 1.6;
   }
   .bar {
     display: flex;

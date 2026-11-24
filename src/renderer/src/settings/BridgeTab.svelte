@@ -34,38 +34,25 @@
 </script>
 
 {#if config}
-  <p class="intro">{t.bridge.intro}</p>
-
   <Group>
     <Row label={t.bridge.enable} detail={t.bridge.enableDetail}>
       <Toggle label={t.bridge.enable} checked={config.bridge.enabled} onchange={(v) => save({ bridge: { enabled: v } })} />
     </Row>
-    <Row label={t.bridge.startHidden} detail={t.bridge.startHiddenDetail}>
+    <Row label={t.bridge.startHidden}>
       <Toggle label={t.bridge.startHidden} checked={config.bridge.startHidden} onchange={(v) => save({ bridge: { startHidden: v } })} />
     </Row>
   </Group>
 
   <Group>
-    <Row label={t.bridge.status} detail={status?.state === 'error' ? `${status.error ?? ''} ${t.bridge.errorDetail}` : undefined} tone={status?.state === 'error' ? 'bad' : undefined}>
+    <Row label={t.bridge.status} detail={status?.state === 'error' ? t.bridge.errorDetail : undefined} tone={status?.state === 'error' ? 'bad' : undefined}>
       <span class="state">{status ? stateLabel(status) : ''}</span>
     </Row>
   </Group>
 
-  <p class="how">{t.bridge.howTo}</p>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 {/if}
 
 <style>
-  .intro,
-  .how {
-    margin: 0 0 var(--gap-l);
-    color: var(--text-dim);
-    font-size: var(--text-s);
-    line-height: 1.6;
-  }
-  .how {
-    margin-top: var(--gap-l);
-  }
   .state {
     color: var(--text-dim);
   }

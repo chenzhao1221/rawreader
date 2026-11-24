@@ -5,8 +5,8 @@ import { appIdentity } from '../../shared/app-identity'
 export const TRAY_LABELS = {
   show: '显示主界面',
   quit: '退出',
-  hintTitle: '还在后台运行',
-  hintBody: '关掉窗口不会退出。要退出，请右键右下角的图标，选“退出”。',
+  hintTitle: 'RawReader 已最小化到托盘',
+  hintBody: '程序仍在后台运行，右键右下角图标可彻底退出。',
 } as const
 
 export interface AppTrayOptions {

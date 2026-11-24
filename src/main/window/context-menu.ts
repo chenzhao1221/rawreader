@@ -4,7 +4,7 @@ import { isHttpUrl } from './address'
 export const MENU_LABELS = {
   back: '后退',
   forward: '前进',
-  reload: '重新加载',
+  reload: '刷新',
   cut: '剪切',
   copy: '复制',
   paste: '粘贴',

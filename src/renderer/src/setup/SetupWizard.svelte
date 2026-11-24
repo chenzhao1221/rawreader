@@ -180,7 +180,7 @@
 
   const roleName: Record<string, string> = {
     ocr: '文字识别模型',
-    ocrMmproj: '文字识别视觉投影',
+    ocrMmproj: '文字识别（视觉模块）',
     translator: '翻译模型',
   }
 </script>
@@ -283,7 +283,7 @@
           </Row>
         </Group>
       {:else}
-        <Group title={t.models.translatorTitle}>
+        <Group>
           <Row label={t.models.translatorTitle}>
             <select class="ui-select select" value={translator} onchange={(e) => pickTranslator(e.currentTarget.value as TranslatorId)}>
               {#each TRANSLATOR_OPTIONS.filter(isDownloadable) as option (option.id)}

@@ -61,7 +61,7 @@ export const MODEL_MANIFEST: readonly ManifestEntry[] = [
     bundled: false,
     huggingface: { repo: 'PaddlePaddle/PaddleOCR-VL-1.5-GGUF', revision: 'cc977c16989848c264d813ec1705cb181b7a21ee' },
     modelscope: { repo: 'PaddlePaddle/PaddleOCR-VL-1.5-GGUF', revision: 'master' },
-    displayName: '文字识别视觉投影',
+    displayName: '文字识别（视觉模块）',
     license: 'Apache-2.0',
   },
   {

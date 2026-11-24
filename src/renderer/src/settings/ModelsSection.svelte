@@ -140,7 +140,7 @@
     </div>
   {/if}
 
-  <Group title={t.models.folder}>
+  <Group>
     <Row label={t.models.folder} detail={models.modelsDir}>
       <button type="button" class="ui-btn small ghost" onclick={modelsLocateFolder}>{t.models.locateFolder}</button>
       <button type="button" class="ui-btn small" onclick={modelsPickFolder}>{t.models.pickFolder}</button>
