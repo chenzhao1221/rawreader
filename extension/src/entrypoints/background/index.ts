@@ -8,7 +8,7 @@
 // direct API) and BACKEND_STATUS reports the choice. The API key is only read here, never sent to a page.
 import { isAllowedImageUrl } from "@/lib/security";
 import { arrayBufferToBase64DataUrl } from "@/lib/utils";
-import { dataUrlToBytes, pingBridge, probeBridge, translateViaBridge } from "@/lib/bridge/client";
+import { dataUrlToBytes, openHistoryInApp, pingBridge, postHistory, probeBridge, translateViaBridge } from "@/lib/bridge/client";
 import { PriorityGate } from "@/lib/bridge/gate";
 import { installBridgeOriginRule } from "@/lib/bridge/origin";
 import {
@@ -21,7 +21,7 @@ import {
   type TaskPortRequest,
 } from "@/lib/bridge/protocol";
 import { DefaultConfig } from "@/lib/configs";
-import { CONTEXT_MENU_ITEMS, MENU_TRANSLATE_IMAGE, isContextTargetMessage, messageForMenuClick } from "@/lib/context-menu";
+import { CONTEXT_MENU_ITEMS, MENU_TRANSLATE_IMAGE, messageForMenuClick } from "@/lib/context-menu";
 import { translateDirect } from "@/lib/direct/client";
 import { NO_BACKEND_CODE } from "@/lib/direct/errors";
 import { createBrowserCodec } from "@/lib/direct/image-browser";
@@ -33,15 +33,22 @@ import { ImageDownloadError, proxyFetch, type ProxyFetchDeps, type SessionRuleAp
 import { BRIDGE_TRANSLATE_TIMEOUT_MS, INPAINT_TIMEOUT_MS, MAX_BRIDGE_REQUESTS_PER_TAB } from "@/lib/timeouts";
 import { appendPerfRecord, BgTimeline, PERF_LOG_KEY, type PerfRecord } from "@/lib/perf/timeline";
 import {
-  MSG_HISTORY_CLEAR,
-  MSG_HISTORY_REMOVE,
+  HISTORY_PENDING_KEY,
+  addPending,
+  mergePending,
+  nextBatch,
+  parsePending,
+  pendingFromLegacy,
+  removeSent,
+  toBridgeItems,
+} from "@/lib/history-sync";
+import {
+  MSG_HISTORY_OPEN,
   MSG_HISTORY_TOUCH,
   READING_HISTORY_ENABLED_KEY,
   READING_HISTORY_KEY,
   SerialQueue,
   parseHistory,
-  removeHistoryEntry,
-  touchHistory,
   type HistoryTouch,
 } from "@/lib/reading-history";
 import { createAsyncResponder, keepAliveWhile, withTimeout } from "./messaging";
@@ -56,13 +63,48 @@ export default defineBackground(() => {
   let workerTasks = 0;
   // Records are appended one after the other, so two tabs finishing together cannot overwrite each other.
   let perfWrites: Promise<unknown> = Promise.resolve();
-  // Reading history: every write (a page touching it, the popup deleting) goes through this queue, one at a time,
-  // so two tabs finishing together cannot overwrite each other. The history only ever lives in this extension's storage.
+  // Reading history: the history lives in the RawReader app. A visit waits in `local:history-pending` until the app has
+  // taken it. Every change goes through this queue, one at a time, so two tabs finishing together cannot overwrite
+  // each other.
   const historyWrites = new SerialQueue();
-  const readHistory = async () => parseHistory(await storage.getItem(READING_HISTORY_KEY));
   const historyEnabled = async () => (await storage.getItem<boolean>(READING_HISTORY_ENABLED_KEY)) !== false;
-  // Whether the "translate this image" entry is currently shown (it is created visible).
-  let menuImageVisible = true;
+  let lastHistoryFailAt = 0;
+  /** After a failed attempt (app closed, old app) the queue waits this long before the next automatic try. */
+  const HISTORY_RETRY_MS = 20_000;
+  /**
+   * Sends the waiting visits to the app. Without `force`, a recent failure skips the attempt. Older versions kept the
+   * whole list here: it is moved into the queue once and removed. Visits leave the queue only after the app took them.
+   */
+  const flushHistory = (force = false) =>
+    historyWrites
+      .run(async () => {
+        const legacy = parseHistory(await storage.getItem(READING_HISTORY_KEY));
+        let pending = parsePending(await storage.getItem(HISTORY_PENDING_KEY));
+        if (legacy.length > 0) {
+          pending = mergePending(pending, pendingFromLegacy(legacy));
+          await storage.setItem(HISTORY_PENDING_KEY, pending);
+        }
+        if ((await storage.getItem(READING_HISTORY_KEY)) !== null) await storage.removeItem(READING_HISTORY_KEY);
+        if (pending.length === 0 || !(await historyEnabled())) return;
+        if (!force && Date.now() - lastHistoryFailAt < HISTORY_RETRY_MS) return;
+        const found = await findBridge();
+        if (!found.ok) {
+          lastHistoryFailAt = Date.now();
+          return;
+        }
+        while (pending.length > 0) {
+          const batch = nextBatch(pending);
+          const reply = await postHistory({ port: found.port }, toBridgeItems(batch));
+          if ("error" in reply) {
+            lastHistoryFailAt = Date.now();
+            return;
+          }
+          pending = removeSent(pending, batch);
+          await storage.setItem(HISTORY_PENDING_KEY, pending);
+        }
+        lastHistoryFailAt = 0;
+      })
+      .catch((error) => console.warn("RawReader: reporting the reading history failed:", error));
   const savePerfRecord = (record: PerfRecord) => {
     perfWrites = perfWrites
       .then(async () => storage.setItem(PERF_LOG_KEY, appendPerfRecord(await storage.getItem<PerfRecord[]>(PERF_LOG_KEY), record)))
@@ -293,8 +335,13 @@ export default defineBackground(() => {
   });
 
   // Nothing to set up: look for the app at browser start and after an install or update, so the port is cached.
-  browser.runtime.onStartup.addListener(() => void findBridge());
+  browser.runtime.onStartup.addListener(() => {
+    void findBridge();
+    void flushHistory(true);
+  });
   browser.runtime.onInstalled.addListener(() => void findBridge());
+  // The worker wakes for many reasons: take this chance to hand over visits that are waiting for the app.
+  void flushHistory();
 
   // ── Right-click menu: manual fallback for images that auto-detection missed ──
   // Menu items persist across worker restarts, so they are (re)created only on install or update.
@@ -307,7 +354,8 @@ export default defineBackground(() => {
       }
     });
   });
-  // The worker restarts at any time and forgets whether it hid the entry; show it again so both sides agree.
+  // An older version hid this entry after a right-click that found no picture, and menu items persist: show it again.
+  // It is never hidden now; a command that finds no picture only shows a short note.
   browser.contextMenus.update(MENU_TRANSLATE_IMAGE, { visible: true }, () => void browser.runtime.lastError);
   // The click is handled by the page's content script, which finds the <img> and runs the normal pipeline.
   browser.contextMenus.onClicked.addListener((info, tab) => {
@@ -328,6 +376,8 @@ export default defineBackground(() => {
         const cachedPort = await storage.getItem<number>(BRIDGE_PORT_CACHE_KEY).catch(() => null);
         const reply = await pingBridge({ cachedPort });
         if (reply.ok && reply.port !== cachedPort) await storage.setItem(BRIDGE_PORT_CACHE_KEY, reply.port).catch(() => {});
+        // The app is there: hand over the visits that waited for it.
+        if (reply.ok) void flushHistory(true);
         return reply;
       };
       keepAliveWhile(run().then(respond).catch(respondErr));
@@ -363,51 +413,36 @@ export default defineBackground(() => {
       return true;
     }
 
-    // The page tells whether the right-click landed on a comic picture: the "translate this image" entry is shown or
-    // hidden to match. Chrome may build the menu before this arrives, so this is best effort: a command that finds
-    // no picture on the page only shows a short note and translates nothing.
-    if (isContextTargetMessage(msg)) {
-      if (msg.hasTarget !== menuImageVisible) {
-        menuImageVisible = msg.hasTarget;
-        browser.contextMenus.update(MENU_TRANSLATE_IMAGE, { visible: msg.hasTarget }, () => void browser.runtime.lastError);
-      }
-      return false;
-    }
-
-    // Reading history. A visit comes from a page (top frame, normal window only); deleting comes from the popup.
+    // Reading history. A visit comes from a page (top frame, normal window only) and is reported to the app.
     if (msg.type === MSG_HISTORY_TOUCH) {
       const touch = msg.data as HistoryTouch | undefined;
       const fromPage = sender.tab !== undefined;
-      // Not in a private window, not from a frame inside a page, and only when the history is switched on.
+      // Not in a private window, not from a frame inside a page, and only when the reporting is switched on.
       if (touch && typeof touch.url === "string" && fromPage && !sender.tab?.incognito && sender.frameId === 0) {
-        void historyWrites.run(async () => {
-          if (!(await historyEnabled())) return;
-          const current = await readHistory();
-          const next = touchHistory(current, touch);
-          if (next !== current) await storage.setItem(READING_HISTORY_KEY, next);
-        }).catch((error) => console.warn("RawReader: reading history write failed:", error));
+        void historyWrites
+          .run(async () => {
+            if (!(await historyEnabled())) return;
+            const current = parsePending(await storage.getItem(HISTORY_PENDING_KEY));
+            const next = addPending(current, touch, Date.now());
+            if (next !== current) await storage.setItem(HISTORY_PENDING_KEY, next);
+          })
+          .then(() => flushHistory())
+          .catch((error) => console.warn("RawReader: reading history write failed:", error));
       }
       return false;
     }
-    if (msg.type === MSG_HISTORY_REMOVE && typeof msg.id === "string") {
-      keepAliveWhile(
-        historyWrites
-          .run(async () => storage.setItem(READING_HISTORY_KEY, removeHistoryEntry(await readHistory(), msg.id as string)))
-          .then(() => respond({ ok: true }))
-          .catch(respondErr),
-      );
+    // The popup asks the app to show its history page.
+    if (msg.type === MSG_HISTORY_OPEN) {
+      const run = async (): Promise<{ ok: true } | { error: { code: string; message: string } }> => {
+        const found = await findBridge();
+        if (!found.ok) return { error: found.error };
+        const reply = await openHistoryInApp({ port: found.port });
+        if (!("error" in reply)) void flushHistory(true);
+        return reply;
+      };
+      keepAliveWhile(run().then(respond).catch(respondErr));
       return true;
     }
-    if (msg.type === MSG_HISTORY_CLEAR) {
-      keepAliveWhile(
-        historyWrites
-          .run(async () => storage.setItem(READING_HISTORY_KEY, []))
-          .then(() => respond({ ok: true }))
-          .catch(respondErr),
-      );
-      return true;
-    }
-
     // Timing record of one finished task (times and sizes only), written to the local ring log.
     if (msg.type === "PERF_RECORD") {
       const record = msg.data as PerfRecord | undefined;

@@ -25,9 +25,11 @@ import { contextToBridge, describeBridgeError } from "@/lib/bridge/client";
 import { browserImageCodec } from "@/lib/direct/image-browser";
 import { acquireImageDataUrl, dataUrlByteLength } from "@/lib/image-source";
 import { findImageForSrcUrl, matchRank } from "@/lib/image-match";
-import { MSG_CONTEXT_TARGET, MSG_CONTEXT_TRANSLATE_PAGE, isContextTranslateMessage } from "@/lib/context-menu";
+import { MSG_CONTEXT_TRANSLATE_PAGE, isContextTranslateMessage } from "@/lib/context-menu";
 import {
+  cssBackgroundUrl,
   meetsBeneathSize,
+  meetsLooseSize,
   meetsPageSize,
   pickForCommand,
   resolveContextTarget,
@@ -1248,13 +1250,16 @@ export default defineContentScript({
         const wrapper = host?.parentElement;
         return wrapper?.querySelector(":scope > img, :scope > canvas") ?? null;
       },
+      qualifiesLoosely: meetsLooseSize,
+      // A site that paints the page as a CSS background usually keeps an <img> of the same address beside it.
+      backgroundUrlOf: (el) => cssBackgroundUrl(getComputedStyle(el).backgroundImage, window.location.href),
+      pictureByUrl: (url) =>
+        Array.from(document.querySelectorAll<HTMLImageElement>("img")).find((img) => matchRank(img, url, window.location.href) !== null) ?? null,
     };
     const noteRightClick = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       const resolved = resolveContextTarget(target, { x: event.clientX, y: event.clientY }, targetEnv);
       lastContext = { at: performance.now(), x: event.clientX, y: event.clientY, pageUrl: window.location.href, target, resolved };
-      // The background shows or hides the menu entry to match. Chrome may build the menu before this arrives.
-      browser.runtime.sendMessage({ type: MSG_CONTEXT_TARGET, hasTarget: resolved !== null }).catch(() => {});
     };
     // The window, in the capture phase: readers that stop events on the document or on the picture still get seen.
     // The button press comes before the menu opens, which gives the background a head start.

@@ -4,8 +4,8 @@
      settings are gone; a connection status line and a link to the options page took their place. -->
 <script lang="ts">
   import { Plug, Settings as SettingsIcon, CircleCheck, CircleAlert, History as HistoryIcon } from "lucide-svelte";
-  import ReadingHistory from "@/lib/components/ReadingHistory.svelte";
-  import { READING_HISTORY_ENABLED_KEY } from "@/lib/reading-history";
+  import { describeBridgeError } from "@/lib/bridge/client";
+  import { MSG_HISTORY_OPEN, READING_HISTORY_ENABLED_KEY } from "@/lib/reading-history";
   import { onDestroy, onMount } from "svelte";
   import { getSiteRule } from "@/lib/adapters";
   import { describeBackendStatus } from "@/lib/direct/status";
@@ -32,8 +32,18 @@
   });
 
   let showContextDrawer = $state(false);
-  // The reading history replaces the popup's content while it is open.
-  let showHistory = $state(false);
+  // The reading history is in the RawReader app; the button asks the app to show it.
+  let historyNote = $state("");
+  async function openHistory() {
+    historyNote = "";
+    try {
+      const reply = (await browser.runtime.sendMessage({ type: MSG_HISTORY_OPEN })) as { ok?: true; error?: { code: string; message: string } | string };
+      if (reply?.ok) return;
+      historyNote = typeof reply?.error === "object" ? describeBridgeError(reply.error) : "没能打开 RawReader 的历史页。";
+    } catch {
+      historyNote = "没能打开 RawReader 的历史页。";
+    }
+  }
   let historyEnabled = $state(true);
   async function setHistoryEnabled(value: boolean) {
     historyEnabled = value;
@@ -140,11 +150,12 @@
     <div class="flex items-center gap-1.5">
       <button
         type="button"
-        onclick={() => (showHistory = true)}
+        onclick={openHistory}
+        title="在 RawReader 里打开阅读历史"
         class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md cursor-pointer border border-[var(--border-line)] text-[var(--text-muted)] hover:text-[var(--accent-amber)]"
       >
         <HistoryIcon size={12} />
-        历史
+        在 RawReader 里看历史
       </button>
       <button
         type="button"
@@ -157,9 +168,6 @@
     </div>
   </header>
 
-  {#if showHistory}
-    <ReadingHistory onBack={() => (showHistory = false)} />
-  {:else}
   <div class="flex-1 overflow-y-auto custom-scrollbar p-3 flex flex-col gap-2.5 min-h-0">
     <!-- Connection -->
     <section class="panel-card !p-2 flex flex-col gap-1.5">
@@ -225,7 +233,7 @@
         <div class="flex flex-col">
           <span class="text-xs font-medium">记录阅读历史</span>
           <span class="text-[11px] text-[var(--text-muted)] leading-tight">
-            {historyEnabled ? "翻译过的页面记在本机，可在“历史”里查看" : "已关闭，已有记录不会删除"}
+            {historyEnabled ? "翻译过的页面只报告给本机的 RawReader，在程序里查看" : "已关闭，不再报告页面"}
           </span>
         </div>
         <label class="switch-cyber shrink-0">
@@ -297,10 +305,8 @@
     </section>
   </div>
 
-  {/if}
-
   <footer class="px-3.5 py-2 border-t border-[var(--border-line)] shrink-0 flex items-center justify-between text-[11px] text-[var(--text-dim)] bg-[var(--bg-void)]">
-    <span class="truncate">在漫画上点右键，选「翻译这张图片」</span>
+    <span class="truncate">{historyNote || "在漫画上点右键，选「翻译这张图片」"}</span>
     <span class="text-[var(--text-muted)] truncate max-w-[120px]">{seriesName}</span>
   </footer>
 </main>

@@ -1,4 +1,5 @@
 import { describeDirectError } from "../direct/errors";
+import type { BridgeHistoryItem } from "../history-sync";
 import {
   BRIDGE_PORTS,
   BRIDGE_PROTOCOL_VERSION,
@@ -26,7 +27,7 @@ export function isValidPort(port: unknown): port is number {
   return typeof port === "number" && Number.isInteger(port) && port >= 1024 && port <= 65535;
 }
 
-export function bridgeUrl(port: number, path: "/ping" | "/translate"): string {
+export function bridgeUrl(port: number, path: "/ping" | "/translate" | "/history" | "/history/open"): string {
   return `http://${BRIDGE_HOST}:${port}${path}`;
 }
 
@@ -70,6 +71,8 @@ export function describeBridgeError(failure: BridgeFailure): string {
   const direct = describeDirectError(failure);
   if (direct) return direct;
   switch (failure.code) {
+    case "not-found":
+      return "这个版本的 RawReader 还不支持阅读历史，请换成新版本。";
     case "forbidden-origin":
     case "forbidden-host":
       return "RawReader 拒绝了这个插件。请使用 RawReader 自带的官方插件构建。";
@@ -211,4 +214,35 @@ export async function translateViaBridge(connection: BridgeConnection, params: T
   } catch (error) {
     return { error: networkFailure(error) };
   }
+}
+
+/** `POST` of a small JSON body to a history route. Failures come back as `{ error }`, never as a throw. */
+async function postJson<T>(connection: BridgeConnection, path: "/history" | "/history/open", body: unknown, timeoutMs: number): Promise<{ result: T } | { error: BridgeFailure }> {
+  if (!isValidPort(connection.port)) return { error: { code: "unreachable", message: "No port" } };
+  const doFetch = connection.fetchImpl ?? ((url, init) => fetch(url, init));
+  try {
+    const res = await doFetch(bridgeUrl(connection.port, path), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return { error: await readFailure(res) };
+    return { result: (await res.json()) as T };
+  } catch (error) {
+    return { error: networkFailure(error) };
+  }
+}
+
+/** `POST /history`: hands visits to the app. Answers how many the app stored. */
+export async function postHistory(connection: BridgeConnection, items: BridgeHistoryItem[], timeoutMs = 10_000): Promise<{ accepted: number } | { error: BridgeFailure }> {
+  const reply = await postJson<{ accepted?: unknown }>(connection, "/history", { v: BRIDGE_PROTOCOL_VERSION, items }, timeoutMs);
+  if ("error" in reply) return reply;
+  return { accepted: typeof reply.result.accepted === "number" ? reply.result.accepted : 0 };
+}
+
+/** `POST /history/open`: the app shows its reading-history page. */
+export async function openHistoryInApp(connection: BridgeConnection, timeoutMs = 5_000): Promise<{ ok: true } | { error: BridgeFailure }> {
+  const reply = await postJson<unknown>(connection, "/history/open", { v: BRIDGE_PROTOCOL_VERSION }, timeoutMs);
+  return "error" in reply ? reply : { ok: true };
 }

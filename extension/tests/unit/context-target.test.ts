@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  cssBackgroundUrl,
   meetsBeneathSize,
+  meetsLooseSize,
   meetsPageSize,
   pickForCommand,
   resolveContextTarget,
@@ -106,6 +108,74 @@ describe("resolveContextTarget", () => {
   });
 });
 
+/** An environment with the lenient pieces a real page has: size 100, background URLs from a data attribute, <img> by address. */
+const looseEnvFor = (stack: Element[], pictures: HTMLImageElement[] = []): TargetEnv => ({
+  ...envFor(stack),
+  qualifiesLoosely: meetsLooseSize,
+  backgroundUrlOf: (el) => cssBackgroundUrl(el.getAttribute("data-bg"), "https://reader.example.test/post/1"),
+  pictureByUrl: (url) => pictures.find((img) => img.getAttribute("src") === url) ?? null,
+});
+
+describe("resolveContextTarget, smaller pictures and CSS backgrounds", () => {
+  it("falls back to a smaller picture under the click when no page-size picture is there", () => {
+    const small = picture("img", "https://cdn.example.test/t.jpg", 280, 180);
+    const layer = size(document.createElement("div"), 300, 200);
+    document.body.append(small, layer);
+    expect(resolveContextTarget(layer, at, envFor([layer, small]))).toBeNull();
+    expect(resolveContextTarget(layer, at, looseEnvFor([layer, small]))).toBe(small);
+  });
+
+  it("does not take an icon, and prefers a page-size picture over a smaller one", () => {
+    const icon = picture("img", "https://cdn.example.test/i.svg", 24, 24);
+    const big = picture("img", "https://cdn.example.test/p.jpg", 900, 1300);
+    const thumb = picture("img", "https://cdn.example.test/t.jpg", 150, 150);
+    document.body.append(icon, big, thumb);
+    expect(resolveContextTarget(icon, at, looseEnvFor([icon]))).toBeNull();
+    expect(resolveContextTarget(thumb, at, looseEnvFor([thumb, big]))).toBe(big);
+  });
+
+  it("maps a CSS background to the <img> of the page that shows the same address", () => {
+    const url = "https://cdn.example.test/media/1.jpg?name=medium";
+    const img = picture("img", url, 506, 285) as HTMLImageElement;
+    const frame = size(document.createElement("div"), 506, 285);
+    frame.setAttribute("data-bg", `url("${url}")`);
+    const layer = size(document.createElement("div"), 506, 285);
+    document.body.append(frame, img, layer);
+    expect(resolveContextTarget(layer, at, looseEnvFor([layer, frame], [img]))).toBe(img);
+  });
+
+  it("returns null for a background with no <img> to go with it, and for a gradient", () => {
+    const frame = size(document.createElement("div"), 506, 285);
+    frame.setAttribute("data-bg", 'url("https://cdn.example.test/media/2.jpg")');
+    const gradient = size(document.createElement("div"), 506, 285);
+    gradient.setAttribute("data-bg", "linear-gradient(red, blue)");
+    expect(resolveContextTarget(frame, at, looseEnvFor([frame]))).toBeNull();
+    expect(resolveContextTarget(gradient, at, looseEnvFor([gradient]))).toBeNull();
+  });
+});
+
+describe("cssBackgroundUrl", () => {
+  const page = "https://reader.example.test/post/1";
+  it("reads quoted and unquoted url() values, resolves relative ones and drops the fragment", () => {
+    expect(cssBackgroundUrl('url("https://cdn.example.test/a.jpg")', page)).toBe("https://cdn.example.test/a.jpg");
+    expect(cssBackgroundUrl("url(https://cdn.example.test/a.jpg)", page)).toBe("https://cdn.example.test/a.jpg");
+    expect(cssBackgroundUrl('url("/img/b.jpg#x")', page)).toBe("https://reader.example.test/img/b.jpg");
+  });
+  it("takes the first url() layer, skips gradients and rejects none, blob and empty values", () => {
+    expect(cssBackgroundUrl('linear-gradient(red, blue), url("https://cdn.example.test/c.jpg")', page)).toBe("https://cdn.example.test/c.jpg");
+    for (const value of ["none", "", "linear-gradient(red, blue)", 'url("blob:https://reader.example.test/x")', undefined]) {
+      expect(cssBackgroundUrl(value, page)).toBeNull();
+    }
+  });
+});
+
+describe("meetsLooseSize", () => {
+  it("accepts a picture shown at 100 px each way and refuses a smaller or unlaid-out one", () => {
+    expect(meetsLooseSize(picture("img", "https://cdn.example.test/a.jpg", 100, 100))).toBe(true);
+    expect(meetsLooseSize(picture("img", "https://cdn.example.test/a.jpg", 99, 400))).toBe(false);
+    expect(meetsLooseSize(document.createElement("img"))).toBe(false);
+  });
+});
 describe("meetsPageSize", () => {
   it("accepts shown or natural size from 260 px each way", () => {
     expect(meetsPageSize(picture("img", "a", 300, 400))).toBe(true);

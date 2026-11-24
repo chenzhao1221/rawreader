@@ -3,10 +3,8 @@ import {
   CONTEXT_MENU_ITEMS,
   MENU_TRANSLATE_IMAGE,
   MENU_TRANSLATE_PAGE,
-  MSG_CONTEXT_TARGET,
   MSG_CONTEXT_TRANSLATE_IMAGE,
   MSG_CONTEXT_TRANSLATE_PAGE,
-  isContextTargetMessage,
   isContextTranslateMessage,
   messageForMenuClick,
 } from "@/lib/context-menu";
@@ -59,15 +57,5 @@ describe("isContextTranslateMessage", () => {
     expect(isContextTranslateMessage({ type: MSG_CONTEXT_TRANSLATE_IMAGE, data: { srcUrl: 3 } })).toBe(false);
     expect(isContextTranslateMessage({ type: MSG_CONTEXT_TRANSLATE_IMAGE, data: { clickedAt: "now" } })).toBe(false);
     expect(isContextTranslateMessage({ type: "BRIDGE_PING" })).toBe(false);
-  });
-});
-
-describe("isContextTargetMessage", () => {
-  it("accepts the page's report and rejects anything else", () => {
-    expect(isContextTargetMessage({ type: MSG_CONTEXT_TARGET, hasTarget: true })).toBe(true);
-    expect(isContextTargetMessage({ type: MSG_CONTEXT_TARGET, hasTarget: false })).toBe(true);
-    expect(isContextTargetMessage({ type: MSG_CONTEXT_TARGET })).toBe(false);
-    expect(isContextTargetMessage({ type: "OTHER", hasTarget: true })).toBe(false);
-    expect(isContextTargetMessage(null)).toBe(false);
   });
 });

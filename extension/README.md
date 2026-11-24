@@ -92,13 +92,12 @@ Order of work, at the page queue and at the per-tab request gate: your menu clic
 
 ## Reading history
 
-The popup has a 历史 button. It lists the pages you translated: title, site, time, grouped 今天 / 昨天 / 更早, with a search box (title, address, site, series), a click to open a page in a new tab, a delete button per entry and 清空全部.
+The history lives in the RawReader desktop app (设置 > 阅读历史, or the clock button in the toolbar): list, search, open, delete one entry, 清空全部. The popup no longer has a list. Its button 在 RawReader 里看历史 asks the app (over the local bridge, `POST /history/open`) to show that page; with the app closed it says 请先打开 RawReader。
 
-- Stored: address (without `#` and tracking parameters), title, host name, series and chapter (only when a site rule gives them), first and last visit time, visit count. Never a picture, the original text or a translation.
-- Where: `chrome.storage.local` of this extension only (key `reading-history`, at most 1000 entries, the oldest go first). It is not synced, not uploaded, not read by anything else, and it does not use the browser's own history: the manifest has no `history` permission.
-- When: the first time a translation starts on a page address (menu, auto, 翻译本页图片), or after 10 seconds on a page that matches a site rule you wrote yourself. A single-page reader that changes address is recorded again for the new address. Pages of one chapter read within 30 minutes of each other (same site, series and chapter) share one entry that points to the newest page.
-- Not in private windows. The switch 记录阅读历史 in the popup turns it off (existing entries stay).
-
+- What is reported: address (without `#` and tracking parameters), title, series and chapter (only when a site rule gives them), time. Never a picture, the original text or a translation. The app stores it in its own SQLite file under its data folder; nothing is uploaded or synced. The extension does not use the browser's own history: the manifest has no `history` permission.
+- How: each visit goes into `chrome.storage.local` (key `history-pending`, at most 300 visits, one per address) and is sent to `POST /history` on `127.0.0.1` at once. It leaves the queue only after the app took it. With the app closed (or an older app that has no history routes) the visits wait and are sent when the app answers again: at the next visit, when the browser starts, when the worker wakes up, or when the popup checks the connection. A list kept in the extension by older versions (`reading-history`) is moved into the queue once and removed.
+- When: the first time a translation starts on a page address (menu, auto, 翻译本页图片), or after 10 seconds on a page that matches a site rule you wrote yourself. A single-page reader that changes address is reported again for the new address.
+- Not in private windows. The switch 记录阅读历史 in the popup stops the reporting (visits already waiting stay in the queue and are not sent until it is switched on again).
 ## Measuring (development)
 
 `scripts/perf-headless.mjs` loads a build into a headless Chrome with a throw-away profile (`--headless=new`, DevTools pipe, no window, no extra dependency) and points the extension at `scripts/mock-vision-api.mjs`, a local stand-in for a vision API that answers after a fixed delay. It never contacts a real service and never touches your own Chrome profile.
@@ -119,7 +118,7 @@ Every number it prints is a mock number (the API round trip is the mock's delay)
 | `src/entrypoints/offscreen/` | Canvas work for text cleaning |
 | `src/lib/bridge/` | Wire types, HTTP client, per-image memo (segments arriving in pieces), task port client, priority gate |
 | `src/lib/direct/` | Direct API mode: presets, request builders, prompt, tolerant JSON parser, image shrinking, backend selection |
-| `src/lib/perf/`, `reading-history.ts`, `task-status.ts`, `context-target.ts` | Timing marks, reading history, status-line phases, which picture a right-click means (all pure logic) |
+| `src/lib/perf/`, `reading-history.ts`, `history-sync.ts`, `task-status.ts`, `context-target.ts` | Timing marks, reading history, status-line phases, which picture a right-click means (all pure logic) |
 | `scripts/`, `tests/fixtures/perf/` | Mock vision API, headless measurement and page checks, synthetic sample pages |
 | `tests/unit/` | Vitest unit tests |
 

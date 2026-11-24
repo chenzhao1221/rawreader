@@ -15,6 +15,15 @@ export interface TargetEnv {
   isOwnUi(el: Element): boolean;
   /** The picture an overlay of ours is drawn over, or null. */
   originalOfOverlay(el: Element): Element | null;
+  /**
+   * Lenient size test for the last resort: the user asked for this spot explicitly, so a smaller picture (a
+   * narrow column, a thumbnail grid) still counts when nothing bigger lies there.
+   */
+  qualifiesLoosely?(el: Element): boolean;
+  /** The picture an element paints as its CSS background (normalised address), or null. */
+  backgroundUrlOf?(el: Element): string | null;
+  /** The <img> of the page that shows this address, or null. Sites often keep one next to a background copy. */
+  pictureByUrl?(url: string): Element | null;
 }
 
 export const isPictureElement = (el: Element | null | undefined): el is HTMLImageElement | HTMLCanvasElement =>
@@ -25,6 +34,9 @@ export const isPictureElement = (el: Element | null | undefined): el is HTMLImag
  * 1. The clicked element itself, when it is a picture of page size.
  * 2. One of our own overlays: the picture it covers.
  * 3. The first picture of page size under the click point, skipping our own UI.
+ * 4. Otherwise the first smaller picture under the click point (at least 100 px each way).
+ * 5. Otherwise an element at the click point that paints a CSS background: the <img> of the page that shows the
+ *    same address, when there is one. (A background with no <img> to go with it cannot be translated here.)
  */
 export function resolveContextTarget(target: Element | null, point: { x: number; y: number }, env: TargetEnv): Element | null {
   if (target && isPictureElement(target) && env.qualifies(target)) return target;
@@ -40,7 +52,38 @@ export function resolveContextTarget(target: Element | null, point: { x: number;
     }
     if (isPictureElement(hit) && env.qualifiesBeneath(hit)) return hit;
   }
+  const stack = env.elementsAt(point.x, point.y).filter((hit) => !env.isOwnUi(hit));
+  for (const hit of stack) if (isPictureElement(hit) && env.qualifiesLoosely?.(hit)) return hit;
+  for (const hit of stack) {
+    const url = env.backgroundUrlOf?.(hit);
+    const picture = url ? env.pictureByUrl?.(url) : null;
+    if (picture && isPictureElement(picture)) return picture;
+  }
   return null;
+}
+
+/** The first `url(...)` layer of a CSS `background-image` value as an absolute address (no fragment), or null. */
+export function cssBackgroundUrl(cssValue: string | null | undefined, baseUrl: string): string | null {
+  const value = cssValue?.trim();
+  if (!value || value === "none") return null;
+  const match = /url\(\s*(?:"((?:[^"\\]|\\.)*)"|\x27((?:[^\x27\\]|\\.)*)\x27|([^)\s]*))\s*\)/i.exec(value);
+  const raw = (match?.[1] ?? match?.[2] ?? match?.[3])?.replace(/\\(.)/g, "$1").trim();
+  if (!raw) return null;
+  if (/^data:/i.test(raw)) return raw;
+  try {
+    const url = new URL(raw, baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.hash = "";
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** The lenient size test: shown at least 100 px each way (a big file drawn as a small icon does not count). */
+export function meetsLooseSize(el: Element): boolean {
+  const html = el as HTMLElement;
+  return (html.offsetWidth || html.clientWidth) >= 100 && (html.offsetHeight || html.clientHeight) >= 100;
 }
 
 /** What the page remembers about the last right-click. */

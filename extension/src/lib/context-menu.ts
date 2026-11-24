@@ -7,8 +7,6 @@ export const MENU_TRANSLATE_PAGE = "rawreader-translate-page";
 
 export const MSG_CONTEXT_TRANSLATE_IMAGE = "CONTEXT_TRANSLATE_IMAGE";
 export const MSG_CONTEXT_TRANSLATE_PAGE = "CONTEXT_TRANSLATE_PAGE";
-/** Page to background: the right-click just landed on a comic picture (or on nothing of the kind). */
-export const MSG_CONTEXT_TARGET = "CONTEXT_TARGET";
 
 export type ContextTranslateMessage =
   | {
@@ -28,8 +26,9 @@ export interface MenuItemDef {
 
 /**
  * The two entries. Titles are UI strings (Simplified Chinese). The image entry also shows on plain page areas and on
- * links: a transparent flip layer, a canvas or a link around the picture hides the "image" context, and the page
- * decides from the click position which picture is meant. The page entry also shows on images.
+ * links: a transparent flip layer, a canvas, a CSS background or a link around the picture hides the "image" context,
+ * and the page decides from the click position which picture is meant. The entry is never hidden: a command that
+ * finds no picture on the page only shows a short note. The page entry also shows on images.
  */
 export const CONTEXT_MENU_ITEMS: readonly MenuItemDef[] = [
   { id: MENU_TRANSLATE_IMAGE, title: "翻译这张图片", contexts: ["image", "page", "link"] },
@@ -70,11 +69,4 @@ export function isContextTranslateMessage(msg: unknown): msg is ContextTranslate
   if (m.data.srcUrl !== undefined && typeof m.data.srcUrl !== "string") return false;
   if (m.data.clickedAt !== undefined && typeof m.data.clickedAt !== "number") return false;
   return true;
-}
-
-/** Narrows an incoming runtime message to the page's report about the last right-click. */
-export function isContextTargetMessage(msg: unknown): msg is { type: typeof MSG_CONTEXT_TARGET; hasTarget: boolean } {
-  if (!msg || typeof msg !== "object") return false;
-  const m = msg as { type?: unknown; hasTarget?: unknown };
-  return m.type === MSG_CONTEXT_TARGET && typeof m.hasTarget === "boolean";
 }
